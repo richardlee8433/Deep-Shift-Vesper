@@ -15,6 +15,14 @@
     "anchorY": 206,
     "charH": 200
   },
+  "miner-walk": {
+    "frames": 6,
+    "frameW": 138,
+    "frameH": 212,
+    "anchorX": 74,
+    "anchorY": 206,
+    "charH": 200
+  },
   "ore-pod": {
     "w": 400,
     "h": 156

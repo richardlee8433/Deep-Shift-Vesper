@@ -5,6 +5,7 @@
 import meta from '../assets/sprites.json';
 import minerCarry from '../assets/miner-carry.webp';
 import minerDrill from '../assets/miner-drill.webp';
+import minerWalk from '../assets/miner-walk.webp';
 import orePod from '../assets/ore-pod.webp';
 import tunnelCobalt from '../assets/tunnel-cobalt.webp';
 import tunnelCopper from '../assets/tunnel-copper.webp';
@@ -25,6 +26,7 @@ export type SheetName = 'miner-drill' | 'miner-carry' | 'miner-walk';
 const SOURCES: Record<string, string> = {
   'miner-drill': minerDrill,
   'miner-carry': minerCarry,
+  'miner-walk': minerWalk,
   'ore-pod': orePod,
   'tunnel-0': tunnelIron,
   'tunnel-1': tunnelCopper,

@@ -1,4 +1,4 @@
-import { LAYERS } from './config';
+import { FACE_X, LAYERS } from './config';
 
 export type MinerState = 'toFace' | 'mining' | 'toStash';
 export interface Miner {
@@ -131,6 +131,8 @@ export function parseSave(raw: unknown): GameState | null {
   s.rush ??= {};
   s.tapCount ??= 0;
   s.objective ??= 0;
+  // Miners saved before the ore face moved would stop short of it; let them respawn.
+  for (const l of s.layers) if (l.miners.some((m) => m.faceX < FACE_X - 12)) l.miners = [];
   return s;
 }
 
