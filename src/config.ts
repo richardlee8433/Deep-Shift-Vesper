@@ -22,6 +22,11 @@ export const HAULER_LOAD_TIME = 0.5;
 export const MAX_CREW = 8;
 export const MAX_HAULERS = 5;
 
+// Tapping a section rushes it: everything there runs RUSH_MULT× faster while time remains.
+export const RUSH_PER_TAP = 1; // seconds added per tap
+export const RUSH_MAX = 10;
+export const RUSH_MULT = 2;
+
 export const REPORT_PERIOD = 30; // seconds of play per financial report
 export const OFFLINE_CAP = 4 * 3600;
 
@@ -60,10 +65,10 @@ export interface Contract {
 }
 
 export const CONTRACTS: Contract[] = [
-  { id: 'F8-01', wage: 0.1, corp: 0.1, oxygen: 0, housing: 0, equipment: 0, transport: 0 },
-  { id: 'F8-12', wage: 0.105, corp: 0.2, oxygen: 0, housing: 0, equipment: 0, transport: 0 },
-  { id: 'F8-14', wage: 0.11, corp: 0.2, oxygen: 0.04, housing: 0.05, equipment: 0, transport: 0 },
-  { id: 'F8-19', wage: 0.115, corp: 0.2, oxygen: 0.05, housing: 0.064, equipment: 0.039, transport: 0.02 },
+  { id: 'F8-01', wage: 0.03, corp: 0.1, oxygen: 0, housing: 0, equipment: 0, transport: 0 },
+  { id: 'F8-12', wage: 0.0315, corp: 0.2, oxygen: 0, housing: 0, equipment: 0, transport: 0 },
+  { id: 'F8-14', wage: 0.033, corp: 0.2, oxygen: 0.04, housing: 0.05, equipment: 0, transport: 0 },
+  { id: 'F8-19', wage: 0.0345, corp: 0.2, oxygen: 0.05, housing: 0.064, equipment: 0.039, transport: 0.02 },
 ];
 
 export const CROWD_DIVISOR = 40; // per-worker fees double at 40 workers

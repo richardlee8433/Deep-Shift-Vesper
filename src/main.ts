@@ -1,7 +1,7 @@
 import './style.css';
 import { OFFLINE_CAP, WORLD_W } from './config';
-import { contentHeight, render, type Camera, type Hit } from './render';
-import { fastForward, step } from './sim';
+import { addTapFx, contentHeight, render, type Camera, type Hit } from './render';
+import { addRush, fastForward, step } from './sim';
 import { clearSave, loadGame, newGame, parseSave, saveGame, type GameState } from './state';
 import { handleAction, initUi, queueNotice, updateHud } from './ui';
 import { credits, duration } from './format';
@@ -122,7 +122,12 @@ function click(e: PointerEvent): void {
   for (let i = hits.length - 1; i >= 0; i--) {
     const h = hits[i];
     if (wx >= h.x && wx <= h.x + h.w && wy >= h.y && wy <= h.y + h.h) {
-      handleAction(h.action);
+      if (h.action.startsWith('rush:')) {
+        addRush(state, h.action.slice(5));
+        addTapFx(wx, wy, '+1s');
+      } else {
+        handleAction(h.action);
+      }
       return;
     }
   }

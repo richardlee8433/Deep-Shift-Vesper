@@ -66,6 +66,7 @@ export interface GameState {
   oreValueLevel: number;
   contract: number;
   flags: Record<string, boolean>;
+  rush: Record<string, number>; // seconds of rush left per section ('layer:0', 'elevator', 'cargo')
   seenEvents: string[];
   eventQueue: string[];
   wagesOwed: number;
@@ -86,12 +87,14 @@ export function newGame(): GameState {
   return {
     version: 1,
     credits: 20,
-    layers: LAYERS.map((_, i) => ({ unlocked: i === 0, drill: 1, crew: 1, stash: 0, miners: [] })),
+    // A little ore already waits at the first tunnel so the first sale comes within seconds.
+    layers: LAYERS.map((_, i) => ({ unlocked: i === 0, drill: 1, crew: 1, stash: i === 0 ? 12 : 0, miners: [] })),
     elevator: { level: 1, y: 0, state: 'idle', targetLayer: -1, load: 0, loadValue: 0, t: 0 },
     cargo: { level: 1, storage: 0, storageValue: 0, haulers: [] },
     oreValueLevel: 1,
     contract: 0,
     flags: {},
+    rush: {},
     seenEvents: [],
     eventQueue: [],
     wagesOwed: 0,
@@ -122,6 +125,7 @@ export function parseSave(raw: unknown): GameState | null {
   // New layers added after a save was written.
   while (s.layers.length < LAYERS.length) s.layers.push({ unlocked: false, drill: 1, crew: 1, stash: 0, miners: [] });
   s.wagesOwed ??= 0;
+  s.rush ??= {};
   return s;
 }
 

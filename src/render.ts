@@ -1,5 +1,5 @@
 import {
-  FACE_X, GROUND_Y, LAYER_H, LAYERS, MINE_TOP, SHAFT_W, SHAFT_X, STASH_X, STORE_X, WORLD_W,
+  FACE_X, GROUND_Y, LAYER_H, LAYERS, MINE_TOP, RUSH_MAX, RUSH_MULT, SHAFT_W, SHAFT_X, STASH_X, STORE_X, WORLD_W,
 } from './config';
 import { workerCount } from './economy';
 import { fmt, credits } from './format';
@@ -345,11 +345,60 @@ function drawSurface(ctx: CanvasRenderingContext2D, s: GameState, time: number, 
   const cargoReady = anyAffordable(s, ['cargo', 'orevalue']);
   drawBadge(ctx, 176, GROUND_Y + 1, 128, '搬運隊', `Lv.${s.cargo.level}`, cargoReady);
 
-  hits.push({ x: STORE_X - 30, y: GROUND_Y - 50, w: 30 + 30, h: 74, action: 'cargo' });
-  hits.push({ x: 176, y: GROUND_Y, w: 128, h: BADGE_H + 2, action: 'cargo' });
-  hits.push({ x: 384, y: GROUND_Y - 44, w: 96, h: 68, action: 'cargo' });
-  hits.push({ x: ox, y: GROUND_Y - oh - 22, w: ow, h: oh + 22, action: 'report' });
-  hits.push({ x: 138, y: GROUND_Y - 66, w: 146, h: 66, action: 'stats' });
+  drawRushBar(ctx, 176, GROUND_Y + 1 + BADGE_H + 1, 128, s.rush.cargo ?? 0);
+
+  // Road, haulers, storage pile and port rush the haulers; building tops open panels; the badge opens upgrades.
+  hits.push({ x: STORE_X - 30, y: GROUND_Y - 40, w: WORLD_W - STORE_X + 30, h: MINE_TOP - GROUND_Y + 40, action: 'rush:cargo' });
+  hits.push({ x: 384, y: GROUND_Y - 44, w: 96, h: 20, action: 'rush:cargo' });
+  hits.push({ x: ox, y: GROUND_Y - oh - 22, w: ow, h: oh - 18, action: 'report' });
+  hits.push({ x: 138, y: GROUND_Y - 66, w: 146, h: 26, action: 'stats' });
+  hits.push(badgeHit(176, GROUND_Y + 1, 128, 'cargo'));
+}
+
+const BADGE_PAD = 6; // badges get a larger tap target than they draw
+
+function badgeHit(x: number, y: number, w: number, action: string): Hit {
+  return { x: x - BADGE_PAD, y: y - BADGE_PAD, w: w + BADGE_PAD * 2, h: BADGE_H + BADGE_PAD * 2, action };
+}
+
+// Remaining rush time, drawn as a thin bar under a section's badge.
+function drawRushBar(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, secs: number): void {
+  if (secs <= 0) return;
+  ctx.fillStyle = 'rgba(244,181,63,0.2)';
+  ctx.fillRect(x + 4, y, w - 8, 3);
+  ctx.fillStyle = C.lamp;
+  ctx.fillRect(x + 4, y, (w - 8) * Math.min(1, secs / RUSH_MAX), 3);
+  text(ctx, `×${RUSH_MULT}`, x + w - 4, y + 13, 7.5, C.lamp, 'right', 700);
+}
+
+// ---- Tap feedback ------------------------------------------------------------
+
+interface Fx { x: number; y: number; t: number; label: string; sparks: { dx: number; dy: number }[] }
+const fx: Fx[] = [];
+const FX_LIFE = 0.8;
+
+export function addTapFx(x: number, y: number, label: string): void {
+  const sparks = Array.from({ length: 6 }, () => {
+    const a = Math.random() * Math.PI * 2;
+    const v = 14 + Math.random() * 16;
+    return { dx: Math.cos(a) * v, dy: Math.sin(a) * v - 8 };
+  });
+  fx.push({ x, y, t: 0, label, sparks });
+  if (fx.length > 24) fx.shift();
+}
+
+function drawFx(ctx: CanvasRenderingContext2D, dt: number): void {
+  for (let i = fx.length - 1; i >= 0; i--) {
+    const f = fx[i];
+    f.t += dt;
+    if (f.t >= FX_LIFE) { fx.splice(i, 1); continue; }
+    const k = f.t / FX_LIFE;
+    ctx.globalAlpha = 1 - k;
+    ctx.fillStyle = C.lamp;
+    for (const sp of f.sparks) ctx.fillRect(f.x + sp.dx * k, f.y + sp.dy * k + 20 * k * k, 2, 2);
+    text(ctx, f.label, f.x, f.y - 10 - k * 18, 8.5, C.lamp, 'center', 700);
+  }
+  ctx.globalAlpha = 1;
 }
 
 export const BADGE_H = 22;
@@ -470,9 +519,26 @@ function drawLayer(ctx: CanvasRenderingContext2D, s: GameState, i: number, time:
   text(ctx, `${i + 1}・${def.name}`, tx + 8, top + 18, 10, C.text, 'left', 700);
   text(ctx, `每單位 ${credits(def.value)}`, tx + 8, top + 33, 7.5, C.dim, 'left', 500);
   const ready = anyAffordable(s, [`drill:${i}`, `crew:${i}`]);
-  drawBadge(ctx, WORLD_W - 156, top + 8, 148, `鑽頭 Lv.${layer.drill}`, `${layer.crew} 人`, ready);
+  const bx = WORLD_W - 156;
+  drawBadge(ctx, bx, top + 8, 148, `鑽頭 Lv.${layer.drill}`, `${layer.crew} 人`, ready);
+  drawRushBar(ctx, bx, top + 8 + BADGE_H + 2, 148, s.rush[`layer:${i}`] ?? 0);
 
-  hits.push({ x: tx, y: top, w: WORLD_W - tx, h: LAYER_H, action: `layer:${i}` });
+  if (i === 0 && !s.flags.tapped) drawTapHint(ctx, (DEPOSIT_HINT_X + FACE_X) / 2, tTop + 26, time);
+
+  hits.push({ x: tx, y: top, w: WORLD_W - tx, h: LAYER_H, action: `rush:layer:${i}` });
+  hits.push(badgeHit(bx, top + 8, 148, `layer:${i}`));
+}
+
+const DEPOSIT_HINT_X = 160;
+
+function drawTapHint(ctx: CanvasRenderingContext2D, x: number, y: number, time: number): void {
+  const p = (time * 1.2) % 1;
+  ctx.strokeStyle = `rgba(244,181,63,${0.8 * (1 - p)})`;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(x, y, 6 + p * 14, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = C.lamp;
+  ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+  text(ctx, '點坑道催工 ×2', x, y + 32, 8.5, C.lamp, 'center', 700);
 }
 
 function drawLockedLayer(ctx: CanvasRenderingContext2D, s: GameState, i: number, top: number, hits: Hit[]): void {
@@ -576,9 +642,10 @@ function drawShaft(ctx: CanvasRenderingContext2D, s: GameState, time: number, hi
   drawWorker(ctx, carX + 10, carTop + carH - 4, { dir: 1, phase: 0, walking: false, suit: C.suit, scale: 0.75, lamp: true });
 
   drawBadge(ctx, 4, GROUND_Y - 122, 112, '升降梯', `Lv.${e.level}`, anyAffordable(s, ['elevator']));
+  drawRushBar(ctx, 4, GROUND_Y - 122 + BADGE_H + 1, 112, s.rush.elevator ?? 0);
 
-  hits.push({ x: 4, y: GROUND_Y - 124, w: 112, h: BADGE_H + 4, action: 'elevator' });
-  hits.push({ x: SHAFT_X - 4, y: GROUND_Y - 92, w: SHAFT_W + 8, h: bottom - GROUND_Y + 92, action: 'elevator' });
+  hits.push({ x: SHAFT_X - 8, y: GROUND_Y - 92, w: SHAFT_W + 16, h: bottom - GROUND_Y + 92, action: 'rush:elevator' });
+  hits.push(badgeHit(4, GROUND_Y - 122, 112, 'elevator'));
 }
 
 export function render(ctx: CanvasRenderingContext2D, s: GameState, cam: Camera, dpr: number, time: number, dt: number, hits: Hit[]): void {
@@ -601,4 +668,5 @@ export function render(ctx: CanvasRenderingContext2D, s: GameState, cam: Camera,
   }
   drawBedrock(ctx, layerTop(shown), viewBottom);
   drawShaft(ctx, s, time, hits);
+  drawFx(ctx, dt);
 }

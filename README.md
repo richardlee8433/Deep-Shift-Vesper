@@ -28,6 +28,7 @@ npm run build     # typecheck + build; also writes dist/vesper.html (single self
 - Core loop: mine → sell → hire → upgrade → dig deeper (4 layers + a restricted 5th)
 - Contract revisions add Helion's share and fees over time; reports itemise every deduction
 - Stats compare production, corporate revenue and (once unlocked) per-worker income
+- Tap a tunnel, the shaft or the road to rush that section (×2 speed, +1 s per tap, up to 10 s); tap a badge to upgrade
 - Offline progress (up to 4 h), autosave to localStorage, test speed ×1/×5/×20 in 設定
 
 Not yet: quotas, worker fatigue, welfare upgrade tree, hidden escape-project tree, ending.

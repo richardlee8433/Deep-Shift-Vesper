@@ -1,6 +1,6 @@
 import {
   DEPOSIT_X, ELEVATOR_LOAD_TIME, FACE_X, GROUND_Y, HAULER_LOAD_TIME, LAYER_H, LAYERS,
-  MINE_TIME, MINE_TOP, MINER_WALK, PORT_X, STORE_X,
+  MINE_TIME, MINE_TOP, MINER_WALK, PORT_X, RUSH_MAX, RUSH_MULT, RUSH_PER_TAP, STORE_X,
 } from './config';
 import { sell, tickBuckets, tickReports, tickWages } from './economy';
 import type { GameState, Hauler, Miner } from './state';
@@ -158,12 +158,22 @@ function stepCargo(s: GameState, dt: number): void {
   }
 }
 
+export const rushMult = (s: GameState, key: string) => ((s.rush[key] ?? 0) > 0 ? RUSH_MULT : 1);
+
+/** A tap on a section: add rush time to it. */
+export function addRush(s: GameState, key: string): void {
+  s.rush[key] = Math.min(RUSH_MAX, (s.rush[key] ?? 0) + RUSH_PER_TAP);
+  s.flags.tapped = true;
+}
+
 /** Advance the whole sector by dt seconds. */
 export function step(s: GameState, dt: number): void {
   s.playTime += dt;
-  s.layers.forEach((l, i) => { if (l.unlocked) stepLayer(s, i, dt); });
-  stepElevator(s, dt);
-  stepCargo(s, dt);
+  // A rushed section simply runs on a faster clock.
+  s.layers.forEach((l, i) => { if (l.unlocked) stepLayer(s, i, dt * rushMult(s, `layer:${i}`)); });
+  stepElevator(s, dt * rushMult(s, 'elevator'));
+  stepCargo(s, dt * rushMult(s, 'cargo'));
+  for (const k in s.rush) s.rush[k] = Math.max(0, s.rush[k] - dt);
   tickBuckets(dt);
   tickWages(s, dt);
   tickReports(s, dt);

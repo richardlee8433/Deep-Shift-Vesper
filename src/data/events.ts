@@ -39,7 +39,8 @@ export const EVENTS: StoryEvent[] = [
     lines: () => [
       { speaker: 'helion', text: '歡迎上任，主管。F8 開採區目前狀態：運作中。產能：低於目標。' },
       { speaker: 'helion', text: '您的任務很簡單：開採。' },
-      { speaker: 'teo', text: '別理那份維修報告，Bertha。你還能再撐一千個小時。……喔，新主管？礦坑在下面，點一下就能看裝備。' },
+      { speaker: 'teo', text: '別理那份維修報告，Bertha。你還能再撐一千個小時。' },
+      { speaker: 'teo', text: '……喔，新主管？想催工就點坑道，大家會跑快一點。要看裝備，點右邊的標籤。' },
     ],
   },
   {

@@ -123,7 +123,7 @@ function openSheet(kind: string): void {
     case 'layer': {
       const i = Number(idx);
       title = `${i + 1}・${LAYERS[i].name}`;
-      sheetUpdate = buildUpgradeSheet(body, [`drill:${i}`, `crew:${i}`], `每單位 ${credits(LAYERS[i].value)}。礦工把礦挖出來，堆在坑道口等升降梯。`);
+      sheetUpdate = buildUpgradeSheet(body, [`drill:${i}`, `crew:${i}`], `每單位 ${credits(LAYERS[i].value)}。礦工把礦挖出來，堆在坑道口等升降梯。點坑道可以催工，速度 ×2。`);
       break;
     }
     case 'elevator':
@@ -243,7 +243,7 @@ function buildReportSheet(body: HTMLElement): () => void {
         </tbody>
         <tbody class="split">
           <tr class="sub"><th>開採區淨額</th><td>${fmt(r.net)}</td></tr>
-          <tr><th>工人薪資<small>每人 ${CONTRACTS[s.contract].wage} ₵/秒</small></th><td class="neg">-${fmt(r.wages)}</td></tr>
+          <tr><th>工人薪資<small>每人 ${fmt(CONTRACTS[s.contract].wage * 60)} ₵/分</small></th><td class="neg">-${fmt(r.wages)}</td></tr>
         </tbody>
         <tfoot><tr><th>營運預算<small>可用於升級</small></th><td>${fmt(r.budget)}</td></tr></tfoot>
       </table>
@@ -271,7 +271,7 @@ function buildStatsSheet(body: HTMLElement): () => void {
       { label: '企業收入', unit: '₵ / 秒', now: b.corporate, delta: change(a.corporate, b.corporate), hl: false },
     ];
     if (s.flags.workerIncome) {
-      rows.push({ label: '每位工人收入', unit: '₵ / 秒', now: b.perWorker, delta: change(a.perWorker, b.perWorker), hl: true });
+      rows.push({ label: '每位工人收入', unit: '₵ / 分', now: b.perWorker * 60, delta: change(a.perWorker, b.perWorker), hl: true });
     }
     wrap.innerHTML = `
       <p class="ledger-meta">與第 1 期報表相比（第 ${last.index} 期）</p>
