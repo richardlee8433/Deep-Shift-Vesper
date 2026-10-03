@@ -3,7 +3,8 @@ import { currentRates, perSecond, recentRate, totalDeduction, workerCount } from
 import { credits, duration, fmt, pct } from './format';
 import type { GameState, Ledger } from './state';
 import { getEvent, SPEAKERS } from './data/events';
-import { buy, getUpgrade, quote, unlockLayer, type BuyMode } from './upgrades';
+import { buy, drillMult, getUpgrade, oreValueMult, quote, unlockLayer, type BuyMode } from './upgrades';
+import { cargoFlow, elevatorFlow, flows, layerFlow, type Station } from './flows';
 
 const $ = <T extends HTMLElement>(sel: string, root: ParentNode = document) => root.querySelector(sel) as T;
 
@@ -128,7 +129,7 @@ function openSheet(kind: string): void {
     }
     case 'elevator':
       title = '升降梯';
-      sheetUpdate = buildUpgradeSheet(body, ['elevator'], '一層一層往下收礦，再送回地面。載重或速度不夠，礦就會在坑道口堆起來。');
+      sheetUpdate = buildUpgradeSheet(body, ['elevator'], '從最深的一層開始收礦，再送回地面。運量跟不上產出時，礦就會在坑道口堆起來。');
       break;
     case 'cargo':
       title = '搬運隊・貨運港';
@@ -155,11 +156,41 @@ function openSheet(kind: string): void {
   sheetUpdate?.();
 }
 
+/** Throughput a row's upgrade gives at a level, in sale ₵ per second. */
+function flowAt(s: GameState, id: string, lvl: number): { label: string; value: number } | null {
+  const [kind, idx] = id.split(':');
+  const i = Number(idx);
+  const grade = oreValueMult(s.oreValueLevel);
+  switch (kind) {
+    case 'elevator': return { label: '運量', value: elevatorFlow(s, lvl) * grade };
+    case 'cargo': return { label: '運量', value: cargoFlow(s, lvl) * grade };
+    case 'drill': return { label: '產出', value: (layerFlow(s, i) * drillMult(lvl)) / drillMult(s.layers[i].drill) * grade };
+    case 'crew': return { label: '產出', value: layerFlow(s, i, lvl) * grade };
+  }
+  return null;
+}
+
+const STATIONS: { key: Station; label: string }[] = [
+  { key: 'mine', label: '礦坑產出' },
+  { key: 'elevator', label: '升降梯' },
+  { key: 'cargo', label: '搬運隊' },
+];
+
 function buildUpgradeSheet(body: HTMLElement, ids: string[], note: string): () => void {
   const intro = document.createElement('p');
   intro.className = 'sheet-note';
   intro.textContent = note;
   body.appendChild(intro);
+
+  // Mine → elevator → haulers, each with its ₵/s; the station holding output back is flagged.
+  const pipe = document.createElement('div');
+  pipe.className = 'pipeline';
+  pipe.innerHTML = STATIONS.map((st) => `
+    <div class="pipe-cell" data-station="${st.key}">
+      <div class="pipe-label">${st.label}<span class="pipe-chip">瓶頸</span></div>
+      <div class="pipe-value"></div>
+    </div>`).join('<div class="pipe-arrow" aria-hidden="true">→</div>');
+  body.appendChild(pipe);
 
   const modes = document.createElement('div');
   modes.className = 'buy-modes';
@@ -183,6 +214,7 @@ function buildUpgradeSheet(body: HTMLElement, ids: string[], note: string): () =
       <div class="up-info">
         <div class="up-head"><span class="up-label"></span><span class="up-level"></span></div>
         <div class="up-effect"><span class="now"></span><span class="arrow">→</span><span class="next"></span></div>
+        <div class="up-flow"><span class="flow-now"></span><span class="arrow">→</span><span class="flow-next"></span></div>
       </div>
       <button type="button" class="up-buy"><span class="qty"></span><span class="cost"></span></button>`;
     const btn = $<HTMLButtonElement>('.up-buy', row);
@@ -196,6 +228,13 @@ function buildUpgradeSheet(body: HTMLElement, ids: string[], note: string): () =
   function update(): void {
     const s = hooks.getState();
     modeButtons.forEach(({ m, b }) => b.setAttribute('aria-pressed', String(m === buyMode)));
+    const f = flows(s);
+    const grade = oreValueMult(s.oreValueLevel);
+    for (const st of STATIONS) {
+      const cell = $(`[data-station="${st.key}"]`, pipe);
+      cell.classList.toggle('limit', f.bottleneck === st.key);
+      $('.pipe-value', cell).textContent = `${credits(f[st.key] * grade)}/秒`;
+    }
     for (const r of rows) {
       const u = getUpgrade(s, r.id)!;
       const q = quote(s, u, buyMode);
@@ -205,6 +244,14 @@ function buildUpgradeSheet(body: HTMLElement, ids: string[], note: string): () =
       $('.now', r.row).textContent = u.effect(u.level);
       $('.next', r.row).textContent = maxed ? '' : u.effect(u.level + q.n);
       $('.arrow', r.row).hidden = maxed;
+      const fl = flowAt(s, r.id, u.level);
+      const flowRow = $('.up-flow', r.row);
+      flowRow.hidden = !fl;
+      if (fl) {
+        $('.flow-now', r.row).textContent = `${fl.label} ${credits(fl.value)}/秒`;
+        $('.flow-next', r.row).textContent = maxed ? '' : `${credits(flowAt(s, r.id, u.level + q.n)!.value)}/秒`;
+        $('.arrow', flowRow).hidden = maxed;
+      }
       $('.qty', r.row).textContent = maxed ? '' : `升級 ×${q.n}`;
       $('.cost', r.row).textContent = maxed ? '已滿' : credits(q.cost);
       r.btn.disabled = maxed || q.cost > s.credits;

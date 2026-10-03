@@ -22,6 +22,13 @@ export const HAULER_LOAD_TIME = 0.5;
 export const MAX_CREW = 8;
 export const MAX_HAULERS = 5;
 
+// Transport (elevator + haulers). Capacity is in ₵ of ore per trip.
+export const ELEVATOR_BASE_CAP = 40;
+export const CARGO_BASE_CAP = 40;
+export const TRANSPORT_CAP_GROWTH = 1.14;
+export const TRANSPORT_COST_BASE = 80;
+export const TRANSPORT_COST_GROWTH = 1.15;
+
 // Tapping a section rushes it: everything there runs RUSH_MULT× faster while time remains.
 export const RUSH_PER_TAP = 1; // seconds added per tap
 export const RUSH_MAX = 10;

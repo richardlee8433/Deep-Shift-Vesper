@@ -2,10 +2,11 @@ import {
   FACE_X, GROUND_Y, LAYER_H, LAYERS, MINE_TOP, RUSH_MAX, RUSH_MULT, SHAFT_W, SHAFT_X, STASH_X, STORE_X, WORLD_W,
 } from './config';
 import { workerCount } from './economy';
-import { fmt, credits } from './format';
+import { credits } from './format';
 import type { GameState } from './state';
 import { layerFloor, layerTop } from './sim';
-import { anyAffordable, canUnlock } from './upgrades';
+import { anyAffordable, canUnlock, elevatorCapacity } from './upgrades';
+import { flows, type Station } from './flows';
 
 export interface Camera {
   y: number;
@@ -30,6 +31,7 @@ const C = {
   text: '#efe6da',
   dim: '#a8998a',
   ok: '#7fd18b',
+  warn: '#e48a78',
   skin: '#d9a982',
   suit: '#5d6b74',
   suitHaul: '#7a5f4a',
@@ -323,7 +325,7 @@ function drawSurface(ctx: CanvasRenderingContext2D, s: GameState, time: number, 
   ctx.quadraticCurveTo(STORE_X - 6, GROUND_Y - pile * 2, STORE_X + 6, GROUND_Y);
   ctx.closePath();
   ctx.fill();
-  text(ctx, fmt(c.storage), STORE_X - 8, GROUND_Y - Math.max(pile, 24) - 4, 8, C.text, 'center', 700);
+  text(ctx, credits(c.storage), STORE_X - 8, GROUND_Y - Math.max(pile, 24) - 4, 8, C.text, 'center', 700);
 
   // Haulers with carts.
   for (const h of c.haulers) {
@@ -343,7 +345,7 @@ function drawSurface(ctx: CanvasRenderingContext2D, s: GameState, time: number, 
 
   // Cargo upgrade badge.
   const cargoReady = anyAffordable(s, ['cargo', 'orevalue']);
-  drawBadge(ctx, 176, GROUND_Y + 1, 128, '搬運隊', `Lv.${s.cargo.level}`, cargoReady);
+  drawBadge(ctx, 176, GROUND_Y + 1, 128, '搬運隊', `Lv.${s.cargo.level}`, cargoReady, bottleneck === 'cargo');
 
   drawRushBar(ctx, 176, GROUND_Y + 1 + BADGE_H + 1, 128, s.rush.cargo ?? 0);
 
@@ -403,7 +405,7 @@ function drawFx(ctx: CanvasRenderingContext2D, dt: number): void {
 
 export const BADGE_H = 22;
 
-function drawBadge(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, label: string, level: string, ready: boolean): void {
+function drawBadge(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, label: string, level: string, ready: boolean, warn = false): void {
   ctx.fillStyle = ready ? 'rgba(244,181,63,0.2)' : 'rgba(20,16,14,0.78)';
   roundRect(ctx, x, y, w, BADGE_H, 5);
   ctx.fill();
@@ -418,6 +420,12 @@ function drawBadge(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
     ctx.beginPath();
     ctx.moveTo(x + w - 15, y + 15); ctx.lineTo(x + w - 10, y + 7); ctx.lineTo(x + w - 5, y + 15);
     ctx.closePath(); ctx.fill();
+  }
+  if (warn) {
+    // Bottleneck marker on the badge's top-left corner.
+    ctx.fillStyle = C.warn;
+    ctx.beginPath(); ctx.arc(x + 1, y + 1, 6, 0, Math.PI * 2); ctx.fill();
+    text(ctx, '!', x + 1, y + 4.5, 7, '#1a1517', 'center', 700);
   }
 }
 
@@ -499,7 +507,7 @@ function drawLayer(ctx: CanvasRenderingContext2D, s: GameState, i: number, time:
     ctx.closePath();
     ctx.fill();
   }
-  text(ctx, fmt(layer.stash), STASH_X + 18, floor - 30, 8.5, C.text, 'center', 700);
+  text(ctx, credits(layer.stash), STASH_X + 18, floor - 30, 8.5, C.text, 'center', 700);
 
   // Miners
   for (const m of layer.miners) {
@@ -635,21 +643,26 @@ function drawShaft(ctx: CanvasRenderingContext2D, s: GameState, time: number, hi
   ctx.fillStyle = '#2a2f33';
   ctx.fillRect(carX + 3, carTop + 4, carW - 6, carH - 8);
   if (e.load > 0) {
+    // Heap size shows how full the car is.
+    const fill = Math.min(1, e.load / elevatorCapacity(e.level));
     ctx.fillStyle = '#9c8a78';
-    ctx.beginPath(); ctx.arc(hx, carTop + carH - 4, 10, Math.PI, 0); ctx.fill();
-    text(ctx, fmt(e.load), hx, carTop - 3, 8, C.text, 'center', 700);
+    ctx.beginPath(); ctx.arc(hx + 4, carTop + carH - 4, 4 + fill * 9, Math.PI, 0); ctx.fill();
+    text(ctx, credits(e.load), hx, carTop - 3, 8, fill > 0.99 ? C.lamp : C.text, 'center', 700);
   }
   drawWorker(ctx, carX + 10, carTop + carH - 4, { dir: 1, phase: 0, walking: false, suit: C.suit, scale: 0.75, lamp: true });
 
-  drawBadge(ctx, 4, GROUND_Y - 122, 112, '升降梯', `Lv.${e.level}`, anyAffordable(s, ['elevator']));
-  drawRushBar(ctx, 4, GROUND_Y - 122 + BADGE_H + 1, 112, s.rush.elevator ?? 0);
+  drawBadge(ctx, 10, GROUND_Y - 122, 106, '升降梯', `Lv.${e.level}`, anyAffordable(s, ['elevator']), bottleneck === 'elevator');
+  drawRushBar(ctx, 10, GROUND_Y - 122 + BADGE_H + 1, 106, s.rush.elevator ?? 0);
 
   hits.push({ x: SHAFT_X - 8, y: GROUND_Y - 92, w: SHAFT_W + 16, h: bottom - GROUND_Y + 92, action: 'rush:elevator' });
-  hits.push(badgeHit(4, GROUND_Y - 122, 112, 'elevator'));
+  hits.push(badgeHit(10, GROUND_Y - 122, 106, 'elevator'));
 }
+
+let bottleneck: Station | null = null;
 
 export function render(ctx: CanvasRenderingContext2D, s: GameState, cam: Camera, dpr: number, time: number, dt: number, hits: Hit[]): void {
   hits.length = 0;
+  bottleneck = flows(s).bottleneck;
   updateWalkers(s, dt);
   const k = cam.scale * dpr;
   ctx.setTransform(1, 0, 0, 1, 0, 0);

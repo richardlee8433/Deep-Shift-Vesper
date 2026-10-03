@@ -1,5 +1,5 @@
 import {
-  DEPOSIT_X, ELEVATOR_LOAD_TIME, FACE_X, GROUND_Y, HAULER_LOAD_TIME, LAYER_H, LAYERS,
+  DEPOSIT_X, ELEVATOR_LOAD_TIME, FACE_X, GROUND_Y, HAULER_LOAD_TIME, LAYER_H,
   MINE_TIME, MINE_TOP, MINER_WALK, PORT_X, RUSH_MAX, RUSH_MULT, RUSH_PER_TAP, STORE_X,
 } from './config';
 import { sell, tickBuckets, tickReports, tickWages } from './economy';
@@ -88,7 +88,6 @@ function stepElevator(s: GameState, dt: number): void {
       layer.stash -= take;
       if (layer.stash < EPS) layer.stash = 0;
       e.load += take;
-      e.loadValue += take * LAYERS[e.targetLayer].value;
       const next = e.load >= cap - EPS ? -1 : deepestWithOre(s, e.targetLayer);
       e.targetLayer = next;
       e.state = 'moving';
@@ -98,9 +97,7 @@ function stepElevator(s: GameState, dt: number): void {
       e.t += dt;
       if (e.t < ELEVATOR_LOAD_TIME) break;
       s.cargo.storage += e.load;
-      s.cargo.storageValue += e.loadValue;
       e.load = 0;
-      e.loadValue = 0;
       e.state = 'idle';
       break;
     }
@@ -108,7 +105,7 @@ function stepElevator(s: GameState, dt: number): void {
 }
 
 function newHauler(): Hauler {
-  return { x: STORE_X, state: 'waiting', t: 0, carry: 0, carryValue: 0, phase: Math.random() * 10 };
+  return { x: STORE_X, state: 'waiting', t: 0, carry: 0, phase: Math.random() * 10 };
 }
 
 function stepCargo(s: GameState, dt: number): void {
@@ -132,12 +129,9 @@ function stepCargo(s: GameState, dt: number): void {
         if (h.t < HAULER_LOAD_TIME) break;
         if (c.storage <= EPS) { h.state = 'waiting'; break; }
         const take = Math.min(c.storage, cap);
-        const value = c.storageValue * (take / c.storage);
         c.storage -= take;
-        c.storageValue -= value;
-        if (c.storage < EPS) { c.storage = 0; c.storageValue = 0; }
+        if (c.storage < EPS) c.storage = 0;
         h.carry = take;
-        h.carryValue = value;
         h.state = 'toPort';
         break;
       }
@@ -149,9 +143,8 @@ function stepCargo(s: GameState, dt: number): void {
       case 'selling':
         h.t += dt;
         if (h.t < HAULER_LOAD_TIME) break;
-        sell(s, h.carryValue);
+        sell(s, h.carry);
         h.carry = 0;
-        h.carryValue = 0;
         h.state = 'toStore';
         break;
     }

@@ -24,8 +24,7 @@ export interface Elevator {
   y: number;
   state: ElevatorState;
   targetLayer: number; // -1 = surface
-  load: number;
-  loadValue: number;
+  load: number; // ₵ worth of ore aboard
   t: number;
 }
 
@@ -34,8 +33,7 @@ export interface Hauler {
   x: number;
   state: HaulerState;
   t: number;
-  carry: number;
-  carryValue: number;
+  carry: number; // ₵ worth of ore
   phase: number;
 }
 
@@ -62,7 +60,8 @@ export interface GameState {
   credits: number;
   layers: Layer[];
   elevator: Elevator;
-  cargo: { level: number; storage: number; storageValue: number; haulers: Hauler[] };
+  // All ore in transit is tracked as ₵ value (before the ore-grade bonus applied at sale).
+  cargo: { level: number; storage: number; haulers: Hauler[] };
   oreValueLevel: number;
   contract: number;
   flags: Record<string, boolean>;
@@ -89,8 +88,8 @@ export function newGame(): GameState {
     credits: 20,
     // A little ore already waits at the first tunnel so the first sale comes within seconds.
     layers: LAYERS.map((_, i) => ({ unlocked: i === 0, drill: 1, crew: 1, stash: i === 0 ? 12 : 0, miners: [] })),
-    elevator: { level: 1, y: 0, state: 'idle', targetLayer: -1, load: 0, loadValue: 0, t: 0 },
-    cargo: { level: 1, storage: 0, storageValue: 0, haulers: [] },
+    elevator: { level: 1, y: 0, state: 'idle', targetLayer: -1, load: 0, t: 0 },
+    cargo: { level: 1, storage: 0, haulers: [] },
     oreValueLevel: 1,
     contract: 0,
     flags: {},

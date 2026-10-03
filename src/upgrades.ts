@@ -1,17 +1,23 @@
-import { BASE_DRILL_RATE, LAYERS, MAX_CREW, MAX_HAULERS, MINE_TIME } from './config';
+import {
+  BASE_DRILL_RATE, CARGO_BASE_CAP, ELEVATOR_BASE_CAP, LAYERS, MAX_CREW, MAX_HAULERS, MINE_TIME,
+  TRANSPORT_CAP_GROWTH, TRANSPORT_COST_BASE, TRANSPORT_COST_GROWTH,
+} from './config';
 import type { GameState } from './state';
-import { fmt } from './format';
+import { credits } from './format';
 
 // ---- Derived stats -------------------------------------------------------
 
 export const drillMult = (lvl: number) => 1 + 0.2 * (lvl - 1);
-export const minerCarry = (s: GameState, i: number) => BASE_DRILL_RATE * MINE_TIME * drillMult(s.layers[i].drill);
+/** ₵ worth of ore one miner brings back per trip. */
+export const minerCarry = (s: GameState, i: number) => BASE_DRILL_RATE * MINE_TIME * drillMult(s.layers[i].drill) * LAYERS[i].value;
 
-export const elevatorCapacity = (lvl: number) => 24 * Math.pow(1.1, lvl - 1);
-export const elevatorSpeed = (lvl: number) => Math.min(420, 90 * (1 + 0.05 * (lvl - 1)));
+// Elevator and haulers carry ₵ value, so deeper (richer) layers fill them faster.
+// Capacity and cost grow at nearly the same rate, which keeps transport in step with output.
+export const elevatorCapacity = (lvl: number) => ELEVATOR_BASE_CAP * Math.pow(TRANSPORT_CAP_GROWTH, lvl - 1);
+export const elevatorSpeed = (lvl: number) => Math.min(400, 90 * (1 + 0.04 * (lvl - 1)));
 
-export const cargoCapacity = (lvl: number) => 30 * Math.pow(1.1, lvl - 1);
-export const cargoSpeed = (lvl: number) => Math.min(220, 90 * (1 + 0.04 * (lvl - 1)));
+export const cargoCapacity = (lvl: number) => CARGO_BASE_CAP * Math.pow(TRANSPORT_CAP_GROWTH, lvl - 1);
+export const cargoSpeed = (lvl: number) => Math.min(220, 90 * (1 + 0.03 * (lvl - 1)));
 export const haulerCount = (lvl: number) => Math.min(MAX_HAULERS, 1 + Math.floor(lvl / 6));
 
 export const oreValueMult = (lvl: number) => 1 + 0.1 * (lvl - 1);
@@ -39,7 +45,7 @@ export function getUpgrade(s: GameState, id: string): Upgrade | null {
         id, label: '鑽頭速度', level: layer.drill, maxLevel: 400,
         cost: (l) => 6 * scale * Math.pow(1.15, l - 1),
         apply: (n) => { layer.drill += n; },
-        effect: (l) => `每趟 ${fmt(BASE_DRILL_RATE * MINE_TIME * drillMult(l))} 單位`,
+        effect: (l) => `每趟 ${credits(BASE_DRILL_RATE * MINE_TIME * drillMult(l) * LAYERS[i].value)}`,
       };
     }
     case 'crew': {
@@ -55,16 +61,16 @@ export function getUpgrade(s: GameState, id: string): Upgrade | null {
     case 'elevator':
       return {
         id, label: '升降梯', level: s.elevator.level, maxLevel: 400,
-        cost: (l) => 16 * Math.pow(1.13, l - 1),
+        cost: (l) => TRANSPORT_COST_BASE * Math.pow(TRANSPORT_COST_GROWTH, l - 1),
         apply: (n) => { s.elevator.level += n; },
-        effect: (l) => `載重 ${fmt(elevatorCapacity(l))}・速度 ${Math.round(elevatorSpeed(l))}`,
+        effect: (l) => `每趟 ${credits(elevatorCapacity(l))}`,
       };
     case 'cargo':
       return {
         id, label: '搬運隊', level: s.cargo.level, maxLevel: 400,
-        cost: (l) => 16 * Math.pow(1.13, l - 1),
+        cost: (l) => TRANSPORT_COST_BASE * Math.pow(TRANSPORT_COST_GROWTH, l - 1),
         apply: (n) => { s.cargo.level += n; },
-        effect: (l) => `${haulerCount(l)} 名搬運工・每趟 ${fmt(cargoCapacity(l))}`,
+        effect: (l) => `${haulerCount(l)} 人・每趟 ${credits(cargoCapacity(l))}`,
       };
     case 'orevalue':
       return {
