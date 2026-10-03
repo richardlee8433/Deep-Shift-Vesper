@@ -7,14 +7,14 @@ export const LAYER_H = 128;
 export const SHAFT_X = 22;
 export const SHAFT_W = 54;
 export const STASH_X = 92;
-export const DEPOSIT_X = 146;
-export const FACE_X = 396;
+export const DEPOSIT_X = 158;
+export const FACE_X = 404;
 
 export const STORE_X = 112;
 export const PORT_X = 420;
 
 // Agent tuning.
-export const MINER_WALK = 70;
+export const MINER_WALK = 74;
 export const MINE_TIME = 2.2;
 export const BASE_DRILL_RATE = 3; // ore units per second while mining
 export const ELEVATOR_LOAD_TIME = 0.5;

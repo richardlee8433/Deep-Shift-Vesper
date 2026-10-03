@@ -14,7 +14,7 @@ export const layerFloor = (i: number) => layerTop(i) + LAYER_H - 16;
 const EPS = 1e-6;
 
 function newMiner(): Miner {
-  const faceX = FACE_X - 8 - Math.random() * 26;
+  const faceX = FACE_X - Math.random() * 10;
   // Stagger new miners along the tunnel so they don't walk in lockstep.
   return {
     x: DEPOSIT_X + Math.random() * (faceX - DEPOSIT_X),

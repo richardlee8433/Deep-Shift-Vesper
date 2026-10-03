@@ -11,6 +11,10 @@ npm run dev       # local dev server
 npm run build     # typecheck + build; also writes dist/vesper.html (single self-contained file)
 ```
 
+## Art
+
+Raw art lives in `art/source/`. `python3 scripts/process_art.py` (Pillow, numpy, scipy) slices the sprite sheets, aligns frames on helmet and boots, scales them, and writes game-ready files plus `sprites.json` to `src/assets/`. Layers without their own tunnel art get recoloured placeholders of the iron tunnel. Anything missing falls back to the procedural drawing. See `docs/ART_DIRECTION.md` for the asset list.
+
 ## Layout
 
 | File | What it holds |

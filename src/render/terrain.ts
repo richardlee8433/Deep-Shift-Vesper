@@ -2,6 +2,7 @@
 // Local coordinates: x 0..WORLD_W, y 0..LAYER_H (0 = top of the layer band).
 
 import { FACE_X, LAYER_H, LAYERS, SHAFT_W, SHAFT_X, WORLD_W } from '../config';
+import { image } from './assets';
 import { P, box, line, makeCache, poly, rivet, rng, shade, type Cache } from './draw';
 
 export const T_TOP = 40; // tunnel ceiling, local y
@@ -82,29 +83,33 @@ function inTunnel(x: number, y: number): boolean {
 
 function paintShaftSection(ctx: CanvasRenderingContext2D): void {
   const x = SHAFT_X;
-  ctx.fillStyle = '#17110f';
+  ctx.fillStyle = '#14181b';
   ctx.fillRect(x, 0, SHAFT_W, LAYER_H);
-  // Back-wall planks
-  for (let px = x + 3; px < x + SHAFT_W - 3; px += 9) {
-    ctx.fillStyle = shade(P.woodDark, -0.35);
-    ctx.fillRect(px, 0, 8, LAYER_H);
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.fillRect(px + 8, 0, 1, LAYER_H);
+  // Back-wall steel panels with seams and a status strip
+  for (let py = 0; py < LAYER_H; py += 32) {
+    ctx.fillStyle = py % 64 === 0 ? '#20272c' : '#1b2125';
+    ctx.fillRect(x + 2, py + 1, SHAFT_W - 4, 30);
+    ctx.fillStyle = 'rgba(255,255,255,0.05)';
+    ctx.fillRect(x + 2, py + 1, SHAFT_W - 4, 1.2);
   }
-  // Cross braces
+  ctx.fillStyle = 'rgba(159,224,239,0.35)';
+  ctx.fillRect(x + SHAFT_W / 2 - 0.6, 0, 1.2, LAYER_H);
+  // Truss braces
   for (let by = 10; by < LAYER_H; by += 42) {
-    line(ctx, x + 4, by, x + SHAFT_W - 4, by + 26, shade(P.wood, -0.25), 2.4);
-    line(ctx, x + SHAFT_W - 4, by, x + 4, by + 26, shade(P.wood, -0.25), 2.4);
+    line(ctx, x + 4, by, x + SHAFT_W - 4, by + 26, P.steelDark, 2.2);
+    line(ctx, x + SHAFT_W - 4, by, x + 4, by + 26, P.steelDark, 2.2);
   }
   // Steel guide rails
   for (const rx of [x + 3, x + SHAFT_W - 6]) {
     box(ctx, rx, -2, 3, LAYER_H + 4, P.steel, 0, 1.1);
     for (let ry = 8; ry < LAYER_H; ry += 24) rivet(ctx, rx + 1.5, ry);
   }
-  // Landing ledge at the tunnel floor
-  box(ctx, x, T_FLOOR, SHAFT_W + 4, 5, P.woodHi, 1, 1.2);
-  ctx.fillStyle = P.wood;
-  ctx.fillRect(x + 1, T_FLOOR + 3, SHAFT_W + 2, 1.5);
+  // Landing platform at the tunnel floor, with hazard edge
+  box(ctx, x, T_FLOOR, SHAFT_W + 4, 5, P.steel, 1, 1.2);
+  for (let hx = x + 2; hx < x + SHAFT_W; hx += 6) {
+    ctx.fillStyle = '#f2c230';
+    ctx.fillRect(hx, T_FLOOR + 1.2, 3, 1.6);
+  }
   // Side walls
   ctx.fillStyle = P.outline;
   ctx.fillRect(x - 1.5, 0, 1.5, LAYER_H);
@@ -232,10 +237,29 @@ export function layerArt(i: number, state: LayerArtState, k: number): Cache {
     // Strata seam along the top of the band
     ctx.fillStyle = shade(def.rock, -0.7);
     ctx.fillRect(0, 0, WORLD_W, 2.5);
+    const painted = image(`tunnel-${i}`);
+    if (painted && state !== 'restricted') {
+      // Rock beside the shaft, toned to sit next to the painted tunnel
+      const g = ctx.createLinearGradient(0, 0, SHAFT_X, 0);
+      g.addColorStop(0, shade(def.tunnel, -0.2));
+      g.addColorStop(1, shade(def.rock, -0.1));
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, SHAFT_X, LAYER_H);
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+      ctx.lineWidth = 1;
+      for (let y = 12; y < LAYER_H; y += 17) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(SHAFT_X, y + 6); ctx.stroke(); }
+    }
     if (state === 'open') {
       paintShaftSection(ctx);
-      paintTunnel(ctx, i);
+      if (painted) ctx.drawImage(painted, T_LEFT, 0, WORLD_W - T_LEFT, LAYER_H);
+      else paintTunnel(ctx, i);
     } else if (state === 'locked') {
+      if (painted) {
+        // Show the sealed tunnel behind the survey marks, dimmed
+        ctx.drawImage(painted, T_LEFT, 0, WORLD_W - T_LEFT, LAYER_H);
+        ctx.fillStyle = 'rgba(10,6,8,0.62)';
+        ctx.fillRect(T_LEFT, 0, WORLD_W - T_LEFT, LAYER_H);
+      }
       paintLocked(ctx);
     } else {
       paintRestricted(ctx);

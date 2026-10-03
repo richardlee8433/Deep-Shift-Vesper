@@ -1,6 +1,7 @@
 import './style.css';
 import { OFFLINE_CAP, WORLD_W } from './config';
 import { addTapFx, contentHeight, render, type Camera, type Hit } from './render/index';
+import { loadAssets } from './render/assets';
 import { addRush, fastForward, step } from './sim';
 import { clearSave, loadGame, newGame, parseSave, saveGame, type GameState } from './state';
 import { handleAction, initUi, queueNotice, updateHud } from './ui';
@@ -158,5 +159,7 @@ function frame(now: number): void {
 }
 
 const hot = window.claude?.hot;
-if (hot?.ready) hot.ready(boot);
-else boot(hot?.data ?? {});
+loadAssets().then(() => {
+  if (hot?.ready) hot.ready(boot);
+  else boot(hot?.data ?? {});
+});

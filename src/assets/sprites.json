@@ -1,0 +1,27 @@
+{
+  "miner-drill": {
+    "frames": 6,
+    "frameW": 206,
+    "frameH": 212,
+    "anchorX": 96,
+    "anchorY": 206,
+    "charH": 200
+  },
+  "miner-carry": {
+    "frames": 6,
+    "frameW": 151,
+    "frameH": 212,
+    "anchorX": 83,
+    "anchorY": 206,
+    "charH": 200
+  },
+  "ore-pod": {
+    "w": 400,
+    "h": 156
+  },
+  "tunnel": {
+    "w": 1616,
+    "h": 512,
+    "cropTop": 27
+  }
+}

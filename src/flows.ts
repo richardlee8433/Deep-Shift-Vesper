@@ -9,7 +9,7 @@ import {
   cargoCapacity, cargoSpeed, elevatorCapacity, elevatorSpeed, haulerCount, minerCarry,
 } from './upgrades';
 
-const AVG_FACE_X = FACE_X - 21; // miners pick a spot 8–34 units short of the face
+const AVG_FACE_X = FACE_X - 5; // miners pick a spot up to 10 units short of the face
 const MINER_CYCLE = (2 * (AVG_FACE_X - DEPOSIT_X)) / MINER_WALK + MINE_TIME;
 
 export function layerFlow(s: GameState, i: number, crew = s.layers[i].crew): number {

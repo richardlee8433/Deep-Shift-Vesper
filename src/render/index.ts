@@ -11,6 +11,7 @@ import { layerTop } from '../sim';
 import type { GameState, Miner } from '../state';
 import { anyAffordable, canUnlock, cargoCapacity, elevatorCapacity } from '../upgrades';
 import { P, box, circle, coinLabel, glow, line, outlinedText, rivet, roundRect, shade, text } from './draw';
+import { drawFrame, image, sheet } from './assets';
 import { burst, drawFx, popup } from './fx';
 import { drawCart, drawPerson, lookFor, type Look } from './people';
 import {
@@ -47,6 +48,8 @@ export function addTapFx(x: number, y: number, label: string): void {
 // ---- Plaques (upgrade badges) ---------------------------------------------
 
 export const PLAQUE_H = 22;
+const POD_X = 142; // ore pod just right of the painted tunnel's door
+const PAINTED_LAMPS = [161, 225, 308, 405];
 const PLAQUE_PAD = 6;
 
 function plaque(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, label: string, value: string, ready: boolean, warn: boolean, time: number): void {
@@ -135,7 +138,43 @@ const SWING_PERIOD = MINE_TIME / 4;
 const MINER_SCALE = 1.3;
 const lastSwing = new WeakMap<Miner, number>();
 
+// Painted miners: about 44 world units from helmet to boots.
+const SPRITE_H = 44;
+const DRILL_FPS = 9;
+const WALK_FPS = 10;
+const lastDrillFrame = new WeakMap<Miner, number>();
+
+/** Walking without ore: the walk cycle if we have it, else the idle drill pose with a bob. */
+function drawWalker(ctx: CanvasRenderingContext2D, x: number, floor: number, phase: number, dir: 1 | -1, h: number): void {
+  if (drawFrame(ctx, 'miner-walk', Math.floor(phase * WALK_FPS), x, floor, h, dir)) return;
+  drawFrame(ctx, 'miner-drill', 0, x, floor - Math.abs(Math.sin(phase * 9)) * 1.4, h, dir);
+}
+
+function spriteShadow(ctx: CanvasRenderingContext2D, x: number, floor: number): void {
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath(); ctx.ellipse(x, floor + 0.5, 9, 2.2, 0, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawPaintedMiners(ctx: CanvasRenderingContext2D, s: GameState, i: number, floor: number): void {
+  const def = LAYERS[i];
+  for (const m of s.layers[i].miners) {
+    spriteShadow(ctx, m.x, floor);
+    if (m.state === 'mining') {
+      const frame = Math.floor(m.t * DRILL_FPS);
+      const prev = lastDrillFrame.get(m) ?? -1;
+      if (frame !== prev && frame % 6 === 2) burst(m.x + 24, floor - 20, [def.vein, shade(def.vein, 0.4), '#bfefff'], 6, 30);
+      lastDrillFrame.set(m, frame);
+      drawFrame(ctx, 'miner-drill', frame, m.x, floor, SPRITE_H, 1);
+    } else if (m.state === 'toStash') {
+      drawFrame(ctx, 'miner-carry', Math.floor(m.phase * WALK_FPS), m.x, floor, SPRITE_H, -1);
+    } else {
+      drawWalker(ctx, m.x, floor, m.phase, 1, SPRITE_H);
+    }
+  }
+}
+
 function drawMiners(ctx: CanvasRenderingContext2D, s: GameState, i: number, floor: number, time: number): void {
+  if (sheet('miner-drill') && sheet('miner-carry')) { drawPaintedMiners(ctx, s, i, floor); return; }
   const def = LAYERS[i];
   s.layers[i].miners.forEach((m, j) => {
     const mining = m.state === 'mining';
@@ -190,8 +229,15 @@ function drawSurface(ctx: CanvasRenderingContext2D, s: GameState, k: number, tim
   c.haulers.forEach((h, j) => {
     const dir = h.state === 'toStore' ? -1 : 1;
     const moving = h.state === 'toStore' || h.state === 'toPort';
-    drawCart(ctx, h.x + dir * 17, GROUND_Y, 24, h.carry > 0 ? 0.9 : 0, '#a3abb5', h.phase * 8);
-    drawPerson(ctx, h.x, GROUND_Y - 1, { look: look(`h${j}`, 90 + j, 'hauler'), pose: moving ? 'push' : 'idle', dir, phase: h.phase * 9, scale: 1.2, blink: blink(time, 90 + j) });
+    if (sheet('miner-carry')) {
+      spriteShadow(ctx, h.x, GROUND_Y - 1);
+      if (h.state === 'toPort') drawFrame(ctx, 'miner-carry', Math.floor(h.phase * WALK_FPS), h.x, GROUND_Y - 1, 40, 1);
+      else if (moving) drawWalker(ctx, h.x, GROUND_Y - 1, h.phase, -1, 40);
+      else drawFrame(ctx, 'miner-carry', 0, h.x, GROUND_Y - 1, 40, 1);
+    } else {
+      drawCart(ctx, h.x + dir * 17, GROUND_Y, 24, h.carry > 0 ? 0.9 : 0, '#a3abb5', h.phase * 8);
+      drawPerson(ctx, h.x, GROUND_Y - 1, { look: look(`h${j}`, 90 + j, 'hauler'), pose: moving ? 'push' : 'idle', dir, phase: h.phase * 9, scale: 1.2, blink: blink(time, 90 + j) });
+    }
   });
 
   // Coin pop-ups for each sale at the port
@@ -215,8 +261,12 @@ function drawOpenLayer(ctx: CanvasRenderingContext2D, s: GameState, i: number, t
   const top = layerTop(i);
   const floor = top + T_FLOOR;
 
-  // Lantern light and sparkles on the ore face
-  for (const lx of LANTERNS) glow(ctx, lx, top + T_TOP + 16, 36, 0.26 * (0.85 + 0.15 * Math.sin(time * 9 + lx + i)));
+  // Lamp light (the painted tunnel has wall lamps; the procedural one has lanterns) and ore sparkles
+  if (image(`tunnel-${i}`)) {
+    for (const lx of PAINTED_LAMPS) glow(ctx, lx, top + 30, 30, 0.22 * (0.85 + 0.15 * Math.sin(time * 7 + lx + i)));
+  } else {
+    for (const lx of LANTERNS) glow(ctx, lx, top + T_TOP + 16, 36, 0.26 * (0.85 + 0.15 * Math.sin(time * 9 + lx + i)));
+  }
   for (let k = 0; k < 4; k++) {
     const a = Math.sin(time * 2.2 + k * 1.9 + i);
     if (a > 0.6) {
@@ -227,10 +277,31 @@ function drawOpenLayer(ctx: CanvasRenderingContext2D, s: GameState, i: number, t
     }
   }
 
-  // Cart at the tunnel mouth holding the stash
+  // Ore pod (or cart) at the tunnel mouth holding the stash
   const fill = layer.stash > 0 ? Math.min(1, 0.25 + layer.stash / (elevatorCapacity(s.elevator.level) * 1.5)) : 0;
-  drawCart(ctx, STASH_X + 20, floor, 38, fill, def.vein);
-  coinLabel(ctx, credits(layer.stash), STASH_X + 20, floor - 40);
+  const pod = image('ore-pod');
+  if (pod) {
+    const w = 50, h = (w * pod.height) / pod.width;
+    const rim = floor - h + 3;
+    if (fill > 0) {
+      ctx.beginPath();
+      ctx.moveTo(POD_X - w * 0.38, rim + 2);
+      ctx.quadraticCurveTo(POD_X, rim - 4 - fill * 14, POD_X + w * 0.38, rim + 2);
+      ctx.closePath();
+      ctx.fillStyle = shade(def.vein, -0.1);
+      ctx.fill();
+      ctx.strokeStyle = P.outline;
+      ctx.lineWidth = 1.1;
+      ctx.stroke();
+      ctx.fillStyle = shade(def.vein, 0.4);
+      for (let k = 0; k < 5; k++) ctx.fillRect(POD_X - 10 + k * 5, rim - fill * 6 - (k % 2) * 3, 2, 2);
+    }
+    ctx.drawImage(pod, POD_X - w / 2, floor - h + 1, w, h);
+    coinLabel(ctx, credits(layer.stash), POD_X, floor - h - 14);
+  } else {
+    drawCart(ctx, STASH_X + 20, floor, 38, fill, def.vein);
+    coinLabel(ctx, credits(layer.stash), STASH_X + 20, floor - 40);
+  }
 
   drawMiners(ctx, s, i, floor, time);
 
@@ -303,7 +374,9 @@ function drawElevator(ctx: CanvasRenderingContext2D, s: GameState, time: number,
   // Cage: back panel, operator, load, bars, frame
   ctx.fillStyle = '#262b30';
   ctx.fillRect(carX, carTop, carW, carH);
-  drawPerson(ctx, carX + 12, e.y - 4, { look: look('op', 77, 'operator'), pose: 'ride', dir: 1, phase: 0, lamp: true, scale: 1.05, blink: blink(time, 77) });
+  if (!drawFrame(ctx, 'miner-walk', 0, carX + 15, e.y - 4, 32, 1) && !drawFrame(ctx, 'miner-drill', 0, carX + 13, e.y - 4, 32, 1)) {
+    drawPerson(ctx, carX + 12, e.y - 4, { look: look('op', 77, 'operator'), pose: 'ride', dir: 1, phase: 0, lamp: true, scale: 1.05, blink: blink(time, 77) });
+  }
   if (e.load > 0) {
     const fill = Math.min(1, e.load / elevatorCapacity(e.level));
     ctx.beginPath();
