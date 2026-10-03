@@ -66,6 +66,8 @@ export interface GameState {
   contract: number;
   flags: Record<string, boolean>;
   rush: Record<string, number>; // seconds of rush left per section ('layer:0', 'elevator', 'cargo')
+  tapCount: number;
+  objective: number; // index into OBJECTIVES
   seenEvents: string[];
   eventQueue: string[];
   wagesOwed: number;
@@ -94,6 +96,8 @@ export function newGame(): GameState {
     contract: 0,
     flags: {},
     rush: {},
+    tapCount: 0,
+    objective: 0,
     seenEvents: [],
     eventQueue: [],
     wagesOwed: 0,
@@ -125,6 +129,8 @@ export function parseSave(raw: unknown): GameState | null {
   while (s.layers.length < LAYERS.length) s.layers.push({ unlocked: false, drill: 1, crew: 1, stash: 0, miners: [] });
   s.wagesOwed ??= 0;
   s.rush ??= {};
+  s.tapCount ??= 0;
+  s.objective ??= 0;
   return s;
 }
 

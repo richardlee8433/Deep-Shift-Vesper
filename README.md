@@ -20,7 +20,8 @@ npm run build     # typecheck + build; also writes dist/vesper.html (single self
 | `src/sim.ts` | Miners, elevator, haulers (visible agents drive production) |
 | `src/economy.ts` | Sales → Helion share → fees → wages → operating budget; reports |
 | `src/data/events.ts` | Story events and dialogue (**placeholder text**) |
-| `src/render.ts` | Canvas scene |
+| `src/data/objectives.ts` | Onboarding objectives with Helion bonus payouts |
+| `src/render/` | Canvas scene: `draw` (palette, primitives), `people` (workers, carts), `terrain` / `surface` (cached scenery), `fx`, `index` (frame + hit regions) |
 | `src/ui.ts` | HUD, upgrade sheets, report / stats, dialog |
 
 ## Prototype scope (v0.1)

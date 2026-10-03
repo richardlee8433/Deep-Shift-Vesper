@@ -3,6 +3,7 @@ import { currentRates, perSecond, recentRate, totalDeduction, workerCount } from
 import { credits, duration, fmt, pct } from './format';
 import type { GameState, Ledger } from './state';
 import { getEvent, SPEAKERS } from './data/events';
+import { claimObjectives, OBJECTIVES } from './data/objectives';
 import { buy, drillMult, getUpgrade, oreValueMult, quote, unlockLayer, type BuyMode } from './upgrades';
 import { cargoFlow, elevatorFlow, flows, layerFlow, type Station } from './flows';
 
@@ -42,8 +43,28 @@ export function updateHud(): void {
   const r = recentRate();
   $('#rate').textContent = `+${fmt(r.net)} / 秒`;
   $('#contract').textContent = `合約 ${CONTRACTS[s.contract].id}`;
+  updateObjective(s);
   sheetUpdate?.();
   if (!modalOpen && (s.eventQueue.length > 0 || modalExtra.length > 0)) advanceModal();
+}
+
+function updateObjective(s: GameState): void {
+  for (const o of claimObjectives(s)) toast(`目標完成：${o.text}・赫利昂績效獎金 ${credits(o.reward)}`);
+  const box = $('#objective');
+  const o = OBJECTIVES[s.objective];
+  if (!o) {
+    $('#obj-text').textContent = '目前沒有新的目標';
+    $('#obj-progress').textContent = '';
+    $('#obj-reward').textContent = '';
+    $<HTMLElement>('#obj-fill').style.width = '100%';
+    return;
+  }
+  const p = o.progress(s);
+  $('#obj-text').textContent = o.text;
+  $('#obj-progress').textContent = p.money ? `${credits(p.now)} / ${credits(p.goal)}` : `${Math.min(p.now, p.goal)} / ${p.goal}`;
+  $('#obj-reward').textContent = `獎金 ${credits(o.reward)}`;
+  $<HTMLElement>('#obj-fill').style.width = `${Math.min(100, (p.now / p.goal) * 100)}%`;
+  box.classList.toggle('done', p.now >= p.goal);
 }
 
 export function toast(msg: string): void {

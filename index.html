@@ -11,22 +11,48 @@
   <body>
     <div id="app">
       <header class="hud">
+        <div class="hud-cash">
+          <div class="pill pill-credits">
+            <svg class="ico coin-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6.5v11"/></svg>
+            <span class="credits" id="credits">₵0</span>
+          </div>
+          <div class="pill pill-rate">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16l5-5 4 4 7-8"/><path d="M15 7h5v5"/></svg>
+            <span class="rate" id="rate">+0 / 秒</span>
+          </div>
+        </div>
         <div class="hud-id">
           <span class="sector">VESPER・F8 開採區</span>
           <span class="contract" id="contract">合約 F8-01</span>
         </div>
-        <div class="hud-cash">
-          <div class="credits" id="credits">₵0</div>
-          <div class="rate" id="rate">+0 / 秒</div>
-        </div>
-        <nav class="hud-actions" aria-label="開採區選單">
-          <button type="button" id="btn-report">報表</button>
-          <button type="button" id="btn-stats">統計</button>
-          <button type="button" id="btn-menu" aria-label="設定">設定</button>
-        </nav>
       </header>
+      <aside id="objective" class="objective" aria-live="polite">
+        <svg class="ico obj-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6z"/><path d="M9 9h6M9 13h6M9 17h4"/></svg>
+        <div class="obj-body">
+          <div class="obj-text"><span class="obj-label">目標</span><span id="obj-text"></span></div>
+          <div class="obj-bar"><div class="obj-fill" id="obj-fill"></div></div>
+        </div>
+        <div class="obj-side">
+          <span class="obj-progress" id="obj-progress"></span>
+          <span class="obj-reward" id="obj-reward"></span>
+        </div>
+      </aside>
       <main id="stage">
-        <canvas id="scene" aria-label="Vesper 礦坑側視圖：點樓層、升降梯或貨運港來升級"></canvas>
+        <canvas id="scene" aria-label="Vesper 礦坑側視圖：點坑道催工，點標牌升級"></canvas>
+        <nav class="toolbar" aria-label="開採區選單">
+          <button type="button" id="btn-report">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6z"/><path d="M9 9h6M9 13h6M9 17h3"/></svg>
+            <span>報表</span>
+          </button>
+          <button type="button" id="btn-stats">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h16"/><path d="M7 16v-5M12 16V6M17 16v-8"/></svg>
+            <span>統計</span>
+          </button>
+          <button type="button" id="btn-menu">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg>
+            <span>設定</span>
+          </button>
+        </nav>
       </main>
     </div>
 

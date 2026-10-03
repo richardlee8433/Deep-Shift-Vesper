@@ -157,6 +157,7 @@ export const rushMult = (s: GameState, key: string) => ((s.rush[key] ?? 0) > 0 ?
 export function addRush(s: GameState, key: string): void {
   s.rush[key] = Math.min(RUSH_MAX, (s.rush[key] ?? 0) + RUSH_PER_TAP);
   s.flags.tapped = true;
+  s.tapCount += 1;
 }
 
 /** Advance the whole sector by dt seconds. */

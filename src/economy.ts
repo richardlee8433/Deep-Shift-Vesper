@@ -30,6 +30,9 @@ export function currentRates(s: GameState): Rates {
 
 export const totalDeduction = (r: Rates) => r.corp + r.oxygen + r.housing + r.equipment + r.transport;
 
+/** Recent sale amounts for the port's coin pop-ups (drained by the renderer, never saved). */
+export const saleFx: number[] = [];
+
 // Rolling one-second buckets for the HUD rate readout (not saved).
 const BUCKETS = 10;
 const netBuckets: number[] = new Array(BUCKETS).fill(0);
@@ -80,6 +83,8 @@ export function sell(s: GameState, value: number): void {
   s.credits += sale.budget;
   netBuckets[bucketIdx] += sale.budget;
   grossBuckets[bucketIdx] += gross;
+  saleFx.push(gross);
+  if (saleFx.length > 6) saleFx.shift();
 }
 
 /** Wages accrue over time at the contract rate and are paid out of sales. */
