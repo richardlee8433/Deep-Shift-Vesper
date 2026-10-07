@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Vesper 遺跡挖掘</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="hud" aria-label="探機狀態">
+        <div class="meter meter-shield">
+          <span class="meter-label">護盾</span>
+          <div class="bar"><i id="shield-fill"></i></div>
+          <b id="shield-num" class="num">100</b>
+        </div>
+        <div class="stat-ore" title="撤離成功才會存入基地；失敗只帶回一半">
+          <svg class="ico ore-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 6-3 12H8L5 9z"/></svg>
+          <b id="ore" class="num">0</b>
+          <span class="dim">未保存</span>
+        </div>
+        <div class="meter meter-threat">
+          <span class="meter-label">威脅</span>
+          <div class="bar"><i id="threat-fill"></i><span class="tick" style="left: 40%"></span><span class="tick" style="left: 70%"></span></div>
+          <b id="threat-num" class="num">0</b>
+          <span id="threat-next" class="dim threat-next"></span>
+        </div>
+        <span id="core-badge" class="core-badge" hidden>核心已取出</span>
+      </header>
+
+      <main id="stage">
+        <canvas id="scene" aria-label="礦區俯視圖：按住岩格挖掘，點通道移動，點遺跡查看"></canvas>
+        <div id="tip" role="tooltip" hidden></div>
+        <div id="toasts" aria-live="polite"></div>
+      </main>
+
+      <footer class="bar-bottom">
+        <div id="slots" class="slots" aria-label="遺物欄位"></div>
+        <div class="acts">
+          <button type="button" id="btn-pulse" class="act">
+            <span class="act-fill" id="pulse-fill"></span>
+            <span class="act-label">脈衝</span><kbd>Space</kbd>
+          </button>
+          <button type="button" id="btn-evac" class="act act-evac">
+            <span class="act-fill" id="evac-fill"></span>
+            <span class="act-label" id="evac-label">撤離</span><kbd>R</kbd>
+          </button>
+          <button type="button" id="btn-menu" class="act act-menu" aria-label="暫停選單">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg><kbd>Esc</kbd>
+          </button>
+        </div>
+      </footer>
+    </div>
+
+    <div id="modal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" id="modal-card"></div>
+    </div>
+
+    <script type="module" src="/src/dig/main.ts"></script>
+  </body>
+</html>

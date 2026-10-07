@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build && node scripts/inline.mjs",
     "typecheck": "tsc --noEmit",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "rolldown tests/dig.test.ts --file .test-build/dig.test.mjs --platform node --format esm --external node:test,node:assert/strict && node --test .test-build/dig.test.mjs"
   },
   "devDependencies": {
     "typescript": "^7.0.2",

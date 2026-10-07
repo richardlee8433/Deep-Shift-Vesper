@@ -363,6 +363,10 @@ function buildMenuSheet(body: HTMLElement): () => void {
       <div class="buy-modes" id="speed-modes"></div>
     </div>
     <div class="menu-group">
+      <div class="menu-label">新玩法試玩</div>
+      <a class="mode-link" href="./dig.html">遺跡挖掘（v0.1 試玩版）→</a>
+    </div>
+    <div class="menu-group">
       <div class="menu-label">重新開始</div>
       <button type="button" class="danger" id="reset-btn">清除進度</button>
     </div>`;
