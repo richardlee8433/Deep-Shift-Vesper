@@ -65,6 +65,11 @@ interface Particle { x: number; y: number; vx: number; vy: number; life: number;
 interface Ring { x: number; y: number; r: number; t: number; color: string }
 interface Line { x1: number; y1: number; x2: number; y2: number; t: number; dur: number; color: string; jag: boolean }
 interface Float { x: number; y: number; text: string; color: string; t: number }
+/** A turret round in flight: from the barrel tip to the target, in world tiles. */
+interface Bolt { x1: number; y1: number; x2: number; y2: number; a: number; t: number; dur: number }
+
+const MUZZLE = 0.12;
+const BOLT_SPEED = 22; // tiles / s — slow enough to read across a few frames
 
 const fx = {
   parts: [] as Particle[],
@@ -77,7 +82,8 @@ const fx = {
   hurt: 0,
   flash: 0,
   baseHit: 0,
-  muzzle: new Map<number, number>(),
+  muzzle: new Map<number, number>(), // turret tile → seconds of flash / recoil left
+  bolts: [] as Bolt[],
 };
 const prand = rng(99);
 
@@ -88,6 +94,13 @@ function burst(x: number, y: number, color: string, n: number, speed: number): v
     const life = 0.3 + prand() * 0.35;
     fx.parts.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1, life, max: life, color });
   }
+}
+
+/** Sparks and a small flash where a round lands. */
+function impact(x: number, y: number, big: boolean): void {
+  burst(x, y, '#ffd27a', big ? 9 : 3, big ? 4 : 3);
+  burst(x, y, '#fff6dc', big ? 3 : 1, 2);
+  fx.rings.push({ x, y, r: big ? 0.7 : 0.3, t: 0.1, color: '#fff3c4' });
 }
 
 const tc = (t: number): [number, number] => [tileX(t) + 0.5, tileY(t) + 0.5];
@@ -117,8 +130,18 @@ export function onSignal(sig: Signal, s: GameState | null, numbers: boolean): vo
       break;
     }
     case 'shot':
-      fx.lines.push({ x1: sig.x1, y1: sig.y1, x2: sig.x2, y2: sig.y2, t: 0, dur: 0.1, color: sig.tower ? '#ffd27a' : '#fff3c4', jag: false });
-      if (sig.tower) fx.muzzle.set(idx(Math.floor(sig.x1), Math.floor(sig.y1)), 0.08);
+      if (sig.tower) {
+        const a = Math.atan2(sig.y2 - sig.y1, sig.x2 - sig.x1);
+        const dist = Math.hypot(sig.x2 - sig.x1, sig.y2 - sig.y1);
+        fx.bolts.push({ x1: sig.x1, y1: sig.y1, x2: sig.x2, y2: sig.y2, a, t: 0, dur: Math.max(0.05, dist / BOLT_SPEED) });
+        fx.muzzle.set(idx(Math.floor(sig.x1), Math.floor(sig.y1)), MUZZLE);
+        // Spent casing kicked out of the side of the turret head.
+        const side = a + Math.PI / 2 * (prand() < 0.5 ? 1 : -1);
+        fx.parts.push({ x: sig.x1, y: sig.y1 - 0.2, vx: Math.cos(side) * 2, vy: -2.5, life: 0.4, max: 0.8, color: '#d9a441' });
+      } else {
+        fx.lines.push({ x1: sig.x1, y1: sig.y1, x2: sig.x2, y2: sig.y2, t: 0, dur: 0.1, color: '#fff3c4', jag: false });
+        impact(sig.x2, sig.y2, false);
+      }
       break;
     case 'ring':
       fx.rings.push({ x: sig.x, y: sig.y, r: sig.r, t: 0, color: sig.kind === 'pulse' ? '#bdf3ff' : sig.kind === 'cap' ? '#ffe08a' : '#8fb6ff' });
@@ -184,7 +207,8 @@ export function onSignal(sig: Signal, s: GameState | null, numbers: boolean): vo
 }
 
 export function clearFx(): void {
-  fx.parts.length = fx.rings.length = fx.lines.length = fx.floats.length = fx.marks.length = 0;
+  fx.parts.length = fx.rings.length = fx.lines.length = fx.floats.length = fx.marks.length = fx.bolts.length = 0;
+  fx.muzzle.clear();
   fx.shake = fx.quake = fx.hurt = fx.flash = fx.baseHit = 0;
 }
 
@@ -205,6 +229,11 @@ function updateFx(dt: number): void {
   for (const m of fx.marks) m.t += dt / 0.6;
   fx.marks = fx.marks.filter((m) => m.t < 1);
   for (const [k, v] of fx.muzzle) v - dt <= 0 ? fx.muzzle.delete(k) : fx.muzzle.set(k, v - dt);
+  for (const bo of fx.bolts) {
+    bo.t += dt / bo.dur;
+    if (bo.t >= 1) impact(bo.x2, bo.y2, true);
+  }
+  fx.bolts = fx.bolts.filter((bo) => bo.t < 1);
   fx.shake = Math.max(0, fx.shake - dt);
   fx.quake = Math.max(0, fx.quake - dt);
   fx.hurt = Math.max(0, fx.hurt - dt);
@@ -351,6 +380,23 @@ export function draw(main: CanvasRenderingContext2D, s: GameState, v: View, o: D
     } else pixelLine(b, X(l.x1), Y(l.y1) - 4, X(l.x2), Y(l.y2) - 3, l.color);
   }
   b.globalAlpha = 1;
+  for (const bo of fx.bolts) {
+    // Start at the barrel tip (head sits 7 px above the tile centre), end at the target's body.
+    const sx = X(bo.x1) + Math.cos(bo.a) * 9, sy = Y(bo.y1) - 7 + Math.sin(bo.a) * 9;
+    const ex = X(bo.x2), ey = Y(bo.y2) - 4;
+    const at = (f: number): [number, number] => [Math.round(sx + (ex - sx) * f), Math.round(sy + (ey - sy) * f)];
+    const [hx, hy] = at(bo.t);
+    const [tx, ty] = at(Math.max(0, bo.t - 0.6));
+    const [mx, my] = at(Math.max(0, bo.t - 0.25));
+    // Two-pixel-thick tracer: a faint long tail, a hot short core, a bright head.
+    const ox = Math.abs(Math.cos(bo.a)) > Math.abs(Math.sin(bo.a)) ? 0 : 1, oy = 1 - ox;
+    pixelLine(b, tx, ty, hx, hy, 'rgba(255,170,70,0.5)');
+    pixelLine(b, tx + ox, ty + oy, hx + ox, hy + oy, 'rgba(255,170,70,0.35)');
+    pixelLine(b, mx, my, hx, hy, '#ffd27a');
+    pixelLine(b, mx + ox, my + oy, hx + ox, hy + oy, '#ffd27a');
+    b.fillStyle = '#fff6dc';
+    b.fillRect(hx - 1, hy - 1, 3, 3);
+  }
   for (const r of fx.rings) {
     b.globalAlpha = 1 - r.t;
     b.strokeStyle = r.color;
@@ -472,7 +518,9 @@ function drawBlock(
     b.drawImage(T.metalFront, px, py + TP - WH);
     const tw = s.towers[i];
     const a = tw ? tw.angle : Math.PI / 2;
-    const hx = px + 8, hy = py + 7 - WH;
+    const m = fx.muzzle.get(i) ?? 0;
+    const kick = Math.round((m / MUZZLE) * 2); // recoil: the head jolts back when it fires
+    const hx = px + 8 - Math.round(Math.cos(a) * kick), hy = py + 7 - WH - Math.round(Math.sin(a) * kick);
     b.fillStyle = INK;
     b.fillRect(hx - 4, hy - 3, 8, 7);
     b.fillStyle = '#2f363d';
@@ -480,9 +528,21 @@ function drawBlock(
     b.fillStyle = '#4a545e';
     b.fillRect(hx - 3, hy - 3, 6, 2);
     pixelLine(b, hx, hy, Math.round(hx + Math.cos(a) * 7), Math.round(hy + Math.sin(a) * 7), '#cfd6dc');
-    if (fx.muzzle.has(i)) {
-      b.fillStyle = '#fff3c4';
-      b.fillRect(Math.round(hx + Math.cos(a) * 8) - 1, Math.round(hy + Math.sin(a) * 8) - 1, 3, 3);
+    if (m > 0) {
+      // Muzzle flash: a hot core, a forward jet and two side sparks.
+      const fxp = Math.round(hx + Math.cos(a) * 9), fyp = Math.round(hy + Math.sin(a) * 9);
+      const big = m > MUZZLE * 0.5;
+      b.fillStyle = '#ff9a3c';
+      b.fillRect(fxp - (big ? 3 : 2), fyp - (big ? 3 : 2), big ? 7 : 5, big ? 7 : 5);
+      b.fillStyle = '#ffd27a';
+      b.fillRect(fxp - 2, fyp - 2, 5, 5);
+      b.fillStyle = '#fff6dc';
+      b.fillRect(fxp - 1, fyp - 1, 3, 3);
+      pixelLine(b, fxp, fyp, Math.round(fxp + Math.cos(a) * (big ? 8 : 4)), Math.round(fyp + Math.sin(a) * (big ? 8 : 4)), '#fff6dc');
+      for (const side of [1, -1]) {
+        const sa = a + side * 1.0;
+        pixelLine(b, fxp, fyp, Math.round(fxp + Math.cos(sa) * (big ? 5 : 3)), Math.round(fyp + Math.sin(sa) * (big ? 5 : 3)), '#ffb347');
+      }
     }
     b.fillStyle = Math.sin(t * 6) > 0 ? '#93d49d' : '#3f6f47';
     b.fillRect(hx - 1, hy + 2, 2, 1);
@@ -641,7 +701,8 @@ function drawLighting(b: CanvasRenderingContext2D, s: GameState, v: View, cx: nu
   lights.push({ x: BASE_POS.x + 1, y: BASE_POS.y + 1, r: 5, i: 0.95 });
   for (const key of Object.keys(s.towers)) {
     const k = Number(key);
-    lights.push({ x: tileX(k) + 0.5, y: tileY(k) + 0.5, r: 2.6, i: 0.7 });
+    const flash = (fx.muzzle.get(k) ?? 0) / MUZZLE;
+    lights.push({ x: tileX(k) + 0.5, y: tileY(k) + 0.5, r: 2.6 + flash * 1.4, i: 0.7 + flash * 0.3 });
   }
   for (const r of RIFTS) if (w.seen[idx(r.x, r.y)]) lights.push({ x: r.x + 0.5, y: r.y + 0.5, r: 3.2, i: 0.8 });
   for (const p of s.sites) if (!p.activated && w.seen[idx(p.x, p.y)]) lights.push({ x: p.x + 0.5, y: p.y + 0.5, r: 2.2, i: 0.6 });
@@ -674,6 +735,11 @@ function drawLighting(b: CanvasRenderingContext2D, s: GameState, v: View, cx: nu
   if (d.dead < 0) glow(d.x * TP - cx, d.y * TP - cy - 6, 40, 'rgba(255,200,120,0.10)');
   for (const r of RIFTS) if (w.seen[idx(r.x, r.y)]) glow((r.x + 0.5) * TP - cx, (r.y + 0.5) * TP - cy, 44, `rgba(255,80,40,${0.22 + 0.06 * Math.sin(t * 3)})`);
   glow((BASE_POS.x + 1) * TP - cx, (BASE_POS.y + 1) * TP - cy - 4, 46, 'rgba(120,220,255,0.12)');
+  for (const [k, m] of fx.muzzle) glow((tileX(k) + 0.5) * TP - cx, (tileY(k) + 0.5) * TP - cy - 7, 30, `rgba(255,190,90,${(0.5 * m / MUZZLE).toFixed(2)})`);
+  for (const bo of fx.bolts) {
+    const bx = bo.x1 + (bo.x2 - bo.x1) * bo.t, by = bo.y1 + (bo.y2 - bo.y1) * bo.t;
+    glow(bx * TP - cx, by * TP - cy - 5, 12, 'rgba(255,200,110,0.45)');
+  }
   b.globalCompositeOperation = 'source-over';
 }
 

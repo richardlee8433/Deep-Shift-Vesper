@@ -80,7 +80,10 @@ export function play(sig: Signal): void {
       else tone(320, 0.12, 'square', 0.08, 640);
       break;
     case 'shot':
-      tone(sig.tower ? 1300 : 1600, 0.05, 'square', 0.04, 900);
+      if (sig.tower) {
+        tone(700, 0.07, 'square', 0.05, 260);
+        hiss(0.06, 0.18, 2600);
+      } else tone(1600, 0.05, 'square', 0.04, 900);
       break;
     case 'ring':
       tone(sig.kind === 'cap' ? 520 : 260, 0.3, 'sine', 0.22, sig.kind === 'cap' ? 1040 : 90);
