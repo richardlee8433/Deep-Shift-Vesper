@@ -59,9 +59,9 @@ function hiss(dur: number, vol: number, freq: number): void {
   src.stop(t + dur);
 }
 
-export function play(s: Signal): void {
+export function play(sig: Signal): void {
   if (!ac || !enabled) return;
-  switch (s.t) {
+  switch (sig.t) {
     case 'dig': {
       const now = ac.currentTime;
       if (now - lastDig > 0.11) {
@@ -71,18 +71,19 @@ export function play(s: Signal): void {
       break;
     }
     case 'break':
-      hiss(0.16, 0.5, s.source === 'chain' ? 2200 : 500);
-      if (s.ore) tone(s.ore > 1 ? 1200 : 880, 0.12, 'triangle', 0.18, s.ore > 1 ? 1800 : 1320);
+      if (sig.source === 'monster') break;
+      hiss(0.16, 0.5, sig.source === 'chain' ? 2200 : 500);
+      if (sig.ore) tone(sig.ore > 1 ? 1200 : 880, 0.12, 'triangle', 0.18, sig.ore > 1 ? 1800 : 1320);
       break;
     case 'link':
-      if (s.kind === 'chain') tone(1400, 0.08, 'sawtooth', 0.06, 700);
+      if (sig.kind === 'chain') tone(1400, 0.08, 'sawtooth', 0.06, 700);
       else tone(320, 0.12, 'square', 0.08, 640);
       break;
     case 'shot':
-      tone(1600, 0.05, 'square', 0.05, 900);
+      tone(sig.tower ? 1300 : 1600, 0.05, 'square', 0.04, 900);
       break;
     case 'ring':
-      tone(s.kind === 'cap' ? 520 : 260, 0.3, 'sine', 0.22, s.kind === 'cap' ? 1040 : 90);
+      tone(sig.kind === 'cap' ? 520 : 260, 0.3, 'sine', 0.22, sig.kind === 'cap' ? 1040 : 90);
       break;
     case 'kill':
       tone(300, 0.15, 'triangle', 0.15, 80);
@@ -90,12 +91,16 @@ export function play(s: Signal): void {
     case 'hurt':
       tone(140, 0.18, 'sawtooth', 0.18, 70);
       break;
-    case 'warn':
-      tone(660, 0.14, 'square', 0.1);
-      tone(440, 0.18, 'square', 0.1, undefined, 0.16);
+    case 'quake':
+      hiss(1.2, 0.5, 120);
+      tone(70, 1.2, 'sawtooth', 0.12, 40);
+      break;
+    case 'wave':
+      tone(220, 0.25, 'square', 0.12);
+      tone(165, 0.4, 'square', 0.12, undefined, 0.25);
       break;
     case 'spawn':
-      tone(200, 0.2, 'sawtooth', 0.06, 320);
+      tone(200, 0.2, 'sawtooth', 0.05, 320);
       break;
     case 'relic':
       [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.25, 'triangle', 0.14, undefined, i * 0.07));
@@ -103,18 +108,30 @@ export function play(s: Signal): void {
     case 'first':
       tone(988, 0.2, 'sine', 0.12, 1480);
       break;
-    case 'nest':
-      if (s.down) tone(180, 0.4, 'sawtooth', 0.15, 50);
+    case 'built':
+      tone(420, 0.06, 'square', 0.08);
+      tone(620, 0.08, 'square', 0.06, undefined, 0.05);
+      break;
+    case 'smashed':
+      hiss(0.3, 0.5, 300);
+      break;
+    case 'baseHit':
+      tone(180, 0.12, 'square', 0.08, 120);
+      break;
+    case 'fall':
+      tone(220, 1, 'sawtooth', 0.18, 50);
+      break;
+    case 'death':
+      tone(260, 0.6, 'sawtooth', 0.15, 60);
+      break;
+    case 'respawn':
+      tone(400, 0.4, 'sine', 0.12, 900);
       break;
     case 'unreachable':
       tone(180, 0.08, 'square', 0.06);
       break;
-    case 'evac':
-      if (s.on) tone(300, 0.6, 'sine', 0.12, 900);
-      break;
-    case 'end':
-      if (s.result === 'success') [523, 784, 1047].forEach((f, i) => tone(f, 0.35, 'triangle', 0.15, undefined, i * 0.12));
-      else tone(220, 0.8, 'sawtooth', 0.15, 55);
+    case 'recall':
+      if (sig.on) tone(300, 0.6, 'sine', 0.12, 900);
       break;
     default:
       break;

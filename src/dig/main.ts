@@ -1,15 +1,18 @@
 import './dig.css';
-import { DRILL_COSTS, SHIELD_COSTS } from './config';
+import { BUILD_KINDS, type BuildKind, type UpgradeId } from './config';
 import { Game } from './game';
 import { play, setSound, unlockAudio } from './audio';
-import { RELICS, type RelicId } from './relics';
+import type { RelicId } from './relics';
 import { clearFx, draw, layout, newView, onSignal, screenToTile } from './render';
 import * as sim from './sim';
-import { abandon, activateSite, press, previewSite, release, retarget, setSink, steer, type StepResult, takeCore, toggleEvac, usePulse } from './sim';
-import { clearSave, newMeta, readSave, writeSave, type MetaState, type Nest } from './state';
 import {
-  baseHtml, clearToasts, closeModal, corePanelHtml, escapeModal, HELP, initModal, logHtml, modalOpen, openModal,
-  pauseHtml, relicPanelHtml, resetHud, resultHtml, showTip, tileInfo, toast, updateHud,
+  activateSite, build, buildError, buyUpgrade, demolish, equipRelic, frontTile, nearBase, press, release, repairBase,
+  retarget, setSink, steer, toggleRecall, unequipRelic, usePulse,
+} from './sim';
+import { clearSave, newGame, readSave, writeSave } from './state';
+import {
+  basePanelHtml, closeModal, escapeModal, initModal, introHtml, modalOpen, openModal, pauseHtml, relicPanelHtml, resetHud,
+  showTip, tileInfo, toast, updateHud,
 } from './ui';
 
 const canvas = document.getElementById('scene') as HTMLCanvasElement;
@@ -17,187 +20,188 @@ const ctx = canvas.getContext('2d')!;
 const stage = document.getElementById('stage')!;
 const view = newView();
 
-let meta: MetaState;
 let game: Game;
-let highlight: Nest | null = null;
 let hover = -1;
-const pointer = { down: false, id: -1, t0: 0, x: 0, y: 0, inside: false };
+let selected: BuildKind | null = null;
+const pointer = { down: false, id: -1, t0: 0, x: 0, y: 0, inside: false, building: false, lastBuilt: -1 };
 let snapCamera = true;
 let dpr = 1;
 let cssW = 0;
 let cssH = 0;
 
-function save(): void {
-  writeSave(meta, game.run);
-}
+const S = () => game.state;
+const save = () => writeSave(S());
 
-// ---- Screens ------------------------------------------------------------------
-
-function showBase(): void {
-  game.pause('base');
-  openModal(baseHtml(meta), (act) => {
-    const [a, arg] = act.split(':');
-    if (a === 'buy') {
-      if (arg === 'drill' && DRILL_COSTS[meta.drill] !== undefined && meta.ore >= DRILL_COSTS[meta.drill]) {
-        meta.ore -= DRILL_COSTS[meta.drill];
-        meta.drill += 1;
-      }
-      if (arg === 'shield' && SHIELD_COSTS[meta.shield] !== undefined && meta.ore >= SHIELD_COSTS[meta.shield]) {
-        meta.ore -= SHIELD_COSTS[meta.shield];
-        meta.shield += 1;
-      }
-      save();
-      showBase();
-    } else if (a === 'start') {
-      meta.startRelic = arg === 'none' ? null : (arg as RelicId);
-      save();
-      showBase();
-    } else if (a === 'go') startRun();
-    else if (a === 'help') openModal(`<h2>操作說明</h2>${HELP}<div class="panel-btns"><button type="button" class="primary" data-act="back" data-focus>返回</button></div>`, showBase, showBase);
-    else if (a === 'log') {
-      openModal(logHtml(meta), (b) => {
-        if (b === 'copy') {
-          void navigator.clipboard?.writeText(JSON.stringify(meta.history, null, 1)).then(() => toast('已複製試玩紀錄', 'good'));
-        } else showBase();
-      }, showBase, 'wide');
-    } else if (a === 'settings') showSettings(false);
-  }, null, 'base');
-}
-
-function startRun(): void {
-  game.startRun();
-  clearFx();
-  clearToasts();
-  resetHud();
-  snapCamera = true;
-  highlight = null;
-  closeModal();
-  game.resume('base');
-  save();
-  if (!meta.seenHelp) {
-    meta.seenHelp = true;
-    game.pause('help');
-    openModal(`<p class="eyebrow">第一次下潛</p><h2>用 WASD 或滑鼠挖掘</h2>${HELP}<div class="panel-btns"><button type="button" class="primary" data-act="ok" data-focus>開始挖掘</button></div>`, () => {
-      closeModal();
-      game.resume('help');
-    }, () => { closeModal(); game.resume('help'); });
-  }
-  toast('用 WASD 或按住岩格挖掘。青色箭頭指向遠古裝置的訊號。', 'info');
-}
-
-function endRun(res: StepResult): void {
-  const sum = game.finish(res);
-  highlight = null;
-  pointer.down = false;
-  save();
-  if (!sum) {
-    showBase();
-    return;
-  }
-  game.pause('base');
-  openModal(resultHtml(sum), () => showBase(), null, sum.result);
-}
+// ---- Panels -----------------------------------------------------------------------
 
 function openPanel(): void {
-  const run = game.run!;
-  const prompt = run.prompt!;
+  const s = S();
+  const prompt = s.prompt!;
   game.pause('panel');
-  pointer.down = false;
-  release(run, false);
+  stopInput();
   const close = () => {
-    run.prompt = null;
-    highlight = null;
+    s.prompt = null;
     closeModal();
     game.resume('panel');
     save();
   };
-  if (prompt.kind === 'core') {
-    openModal(corePanelHtml(run), (act) => {
-      if (act === 'take') takeCore(run);
-      close();
-    }, close);
+  if (prompt.kind === 'base') {
+    s.prompt = null;
+    game.resume('panel');
+    openBase();
     return;
   }
   const site = prompt.site;
-  const p = previewSite(run, meta, site);
-  highlight = p.nest;
-  openModal(relicPanelHtml(run, meta, site), (act) => {
+  openModal(relicPanelHtml(s, site), (act) => {
     if (act === 'leave') return close();
-    const choice = act === 'add' ? 'add' : act === 'none' ? 'none' : (act.split(':')[1] as RelicId);
-    activateSite(run, meta, site, choice);
-    const r = RELICS[run.sites[site].relic];
-    if (p.backup) toast(`教學藍圖已備份：${r.name}`, 'good');
-    else if (!p.owned) toast(`${r.name}藍圖：待撤離保存`, 'info');
+    const choice = act === 'add' ? 'add' : act === 'keep' ? 'keep' : (act.split(':')[1] as RelicId);
+    activateSite(s, site, choice);
     close();
   }, close);
 }
 
-function showPause(): void {
-  if (!game.run) return;
-  game.pause('menu');
-  pointer.down = false;
-  release(game.run, false);
-  save();
-  showSettings(true);
+function openBase(): void {
+  const s = S();
+  if (!nearBase(s)) {
+    toast('回到基地附近才能打開基地面板（按 R 傳送回去）', 'info');
+    return;
+  }
+  game.pause('base');
+  stopInput();
+  const refresh = () => openModal(basePanelHtml(s), handle, close, 'base');
+  const close = () => {
+    closeModal();
+    game.resume('base');
+    save();
+  };
+  const handle = (act: string) => {
+    const [a, arg] = act.split(':');
+    if (a === 'close') return close();
+    if (a === 'buy') {
+      const r = buyUpgrade(s, arg as UpgradeId);
+      if (!r.ok && r.msg) toast(r.msg, 'warn');
+    } else if (a === 'repair') {
+      const r = repairBase(s);
+      if (!r.ok && r.msg) toast(r.msg, 'warn');
+    } else if (a === 'toggle') {
+      const rel = arg as RelicId;
+      if (s.relics.equipped.includes(rel)) unequipRelic(s, rel);
+      else {
+        const r = equipRelic(s, rel);
+        if (!r.ok && r.msg) toast(r.msg, 'warn');
+      }
+    } else return;
+    save();
+    refresh();
+  };
+  refresh();
 }
 
-function showSettings(inRun: boolean): void {
+function showPause(): void {
+  game.pause('menu');
+  stopInput();
+  save();
   const back = () => {
-    if (inRun) {
-      closeModal();
-      game.resume('menu');
-    } else showBase();
+    closeModal();
+    game.resume('menu');
   };
-  openModal(pauseHtml(meta, inRun), (act, el) => {
+  openModal(pauseHtml(S()), (act, el) => {
+    const s = S();
     if (act === 'sound') {
-      meta.settings.sound = (el as HTMLInputElement).checked;
-      setSound(meta.settings.sound);
+      s.settings.sound = (el as HTMLInputElement).checked;
+      setSound(s.settings.sound);
       save();
     } else if (act === 'numbers') {
-      meta.settings.numbers = (el as HTMLInputElement).checked;
+      s.settings.numbers = (el as HTMLInputElement).checked;
       save();
-    } else if (act === 'resume' || act === 'close') back();
-    else if (act === 'abandon') {
-      if (!game.run || !window.confirm('放棄本趟？會照失敗結算：礦石減半、本趟新藍圖遺失。')) return;
-      closeModal();
-      game.resume('menu');
-      endRun(abandon(game.run));
-    } else if (act === 'reset') {
-      if (!window.confirm('清除挖掘模式的所有進度（礦石、升級、藍圖）？舊版放置經營的存檔不受影響。')) return;
+    } else if (act === 'resume') back();
+    else if (act === 'reset') {
+      if (!window.confirm('清除這個世界的所有進度，從頭開始？舊版放置經營的存檔不受影響。')) return;
       clearSave();
-      meta = newMeta();
-      game = new Game(meta);
-      showBase();
+      game = new Game(newGame());
+      clearFx();
+      resetHud();
+      snapCamera = true;
+      closeModal();
+      showIntro();
     }
   }, back);
 }
 
-// ---- Input ------------------------------------------------------------------
+function showIntro(): void {
+  game.pause('intro');
+  openModal(introHtml(), () => {
+    closeModal();
+    S().seenHelp = true;
+    game.resume('intro');
+    save();
+    toast('先往下挖、收集礦石。第一波會在 3 分鐘後從地心湧出。', 'info');
+  }, null, 'wide');
+}
+
+// ---- Building ---------------------------------------------------------------------
+
+function select(kind: BuildKind | null): void {
+  selected = selected === kind ? null : kind;
+}
+
+function tryBuild(tile: number, quietFail = false): void {
+  if (!selected) return;
+  const r = build(S(), tile, selected);
+  if (!r.ok && r.msg && !quietFail) toast(r.msg, 'warn');
+}
+
+function tryDemolish(tile: number): void {
+  const r = demolish(S(), tile);
+  if (!r.ok && r.msg) toast(r.msg, 'warn');
+}
+
+// ---- Input ------------------------------------------------------------------------
 
 function local(e: { clientX: number; clientY: number }): [number, number] {
   const r = canvas.getBoundingClientRect();
   return [e.clientX - r.left, e.clientY - r.top];
 }
 
+function stopInput(): void {
+  pointer.down = false;
+  pointer.building = false;
+  heldDirs.length = 0;
+  release(S(), false);
+}
+
 function setupInput(): void {
   canvas.addEventListener('pointerdown', (e) => {
     unlockAudio();
-    const run = game.run;
-    if (!run || game.paused) return;
+    if (game.paused) return;
     const [x, y] = local(e);
     pointer.x = x;
     pointer.y = y;
-    hover = screenToTile(view, x, y);
+    hover = screenToTile(view, S(), x, y);
     if (hover < 0) return;
-    view.look = 0;
-    const res = press(run, hover);
+    view.lookX = view.lookY = 0;
+    if (e.button === 2) {
+      tryDemolish(hover);
+      return;
+    }
+    if (selected) {
+      tryBuild(hover);
+      pointer.down = true;
+      pointer.building = true;
+      pointer.lastBuilt = hover;
+      pointer.id = e.pointerId;
+      canvas.setPointerCapture(e.pointerId);
+      return;
+    }
+    const res = press(S(), hover);
     if (!res.ok) {
       if (res.msg) toast(res.msg, 'warn');
-      onSignal({ t: 'unreachable', tile: hover }, run, meta.settings.numbers);
+      onSignal({ t: 'unreachable', tile: hover }, S(), S().settings.numbers);
       play({ t: 'unreachable', tile: hover });
       return;
     }
     pointer.down = true;
+    pointer.building = false;
     pointer.id = e.pointerId;
     pointer.t0 = performance.now();
     canvas.setPointerCapture(e.pointerId);
@@ -207,12 +211,13 @@ function setupInput(): void {
     pointer.x = x;
     pointer.y = y;
     pointer.inside = true;
-    hover = screenToTile(view, x, y);
+    hover = screenToTile(view, S(), x, y);
   });
   const up = (e: PointerEvent) => {
     if (!pointer.down || e.pointerId !== pointer.id) return;
     pointer.down = false;
-    if (game.run) release(game.run, performance.now() - pointer.t0 < 250);
+    if (!pointer.building) release(S(), performance.now() - pointer.t0 < 250);
+    pointer.building = false;
     if (e.pointerType !== 'mouse') hover = -1;
   };
   canvas.addEventListener('pointerup', up);
@@ -223,19 +228,34 @@ function setupInput(): void {
   });
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
-    view.look += e.deltaY / Math.max(8, view.ts);
+    view.lookY += e.deltaY / view.S;
+    view.lookX += e.deltaX / view.S;
   }, { passive: false });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-  document.getElementById('btn-pulse')!.addEventListener('click', (e) => { (e.currentTarget as HTMLElement).blur(); doPulse(); });
-  document.getElementById('btn-evac')!.addEventListener('click', (e) => { (e.currentTarget as HTMLElement).blur(); doEvac(); });
-  document.getElementById('btn-menu')!.addEventListener('click', (e) => { (e.currentTarget as HTMLElement).blur(); showPause(); });
+  const btn = (id: string, fn: () => void) => document.getElementById(id)!.addEventListener('click', (e) => {
+    (e.currentTarget as HTMLElement).blur();
+    unlockAudio();
+    fn();
+  });
+  btn('btn-pulse', doPulse);
+  btn('btn-recall', doRecall);
+  btn('btn-base', openBase);
+  btn('btn-menu', showPause);
+  document.getElementById('builds')!.addEventListener('click', (e) => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-build]');
+    if (!el) return;
+    el.blur();
+    select(el.dataset.build as BuildKind);
+  });
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       e.preventDefault();
       if (escapeModal()) return;
-      if (!modalOpen()) showPause();
+      if (modalOpen()) return;
+      if (selected) selected = null;
+      else showPause();
       return;
     }
     const dir = KEY_DIR[e.code];
@@ -245,34 +265,44 @@ function setupInput(): void {
       keyDown(dir);
       return;
     }
-    if (modalOpen() || e.repeat) return;
+    if (modalOpen() || e.repeat || game.paused) return;
+    const key = e.key.toLowerCase();
     if (e.code === 'Space') {
       e.preventDefault();
       doPulse();
-    } else if (e.key === 'r' || e.key === 'R') {
-      e.preventDefault();
-      doEvac();
-    }
+    } else if (key === 'r') doRecall();
+    else if (key === 'b') openBase();
+    else if (key === 'q') selected = null;
+    else if (key === '1' || key === '2' || key === '3') select(BUILD_KINDS[Number(key) - 1]);
+    else if (key === 'e') {
+      const t = frontTile(S());
+      if (selected) tryBuild(t);
+      else if (t >= 0) {
+        const r = press(S(), t);
+        if (!r.ok && r.msg) toast(r.msg, 'info');
+      }
+    } else if (key === 'x') tryDemolish(hover >= 0 && pointer.inside ? hover : frontTile(S()));
   });
   document.addEventListener('keyup', (e) => {
     const dir = KEY_DIR[e.code];
     if (dir === undefined) return;
     const i = heldDirs.indexOf(dir);
     if (i >= 0) heldDirs.splice(i, 1);
-    if (!heldDirs.length) stopSteering();
+    if (!heldDirs.length && keySteering) {
+      keySteering = false;
+      if (!pointer.down) release(S(), false);
+    }
   });
   window.addEventListener('blur', () => {
     heldDirs.length = 0;
-    stopSteering();
+    keySteering = false;
   });
 }
-
-// ---- Keyboard steering --------------------------------------------------------
 
 const KEY_DIR: Record<string, number> = {
   KeyW: 0, ArrowUp: 0, KeyD: 1, ArrowRight: 1, KeyS: 2, ArrowDown: 2, KeyA: 3, ArrowLeft: 3,
 };
-const heldDirs: number[] = []; // most recent last
+const heldDirs: number[] = [];
 let keySteering = false;
 
 function keyDown(dir: number): void {
@@ -280,37 +310,26 @@ function keyDown(dir: number): void {
   const i = heldDirs.indexOf(dir);
   if (i >= 0) heldDirs.splice(i, 1);
   heldDirs.push(dir);
-  const run = game.run;
-  if (!run || game.paused) return;
-  view.look = 0;
+  if (game.paused) return;
+  view.lookX = view.lookY = 0;
   keySteering = true;
-  const res = steer(run, dir, true);
+  const res = steer(S(), dir, true);
   if (!res.ok && res.msg) toast(res.msg, 'warn');
 }
 
-function stopSteering(): void {
-  if (!keySteering) return;
-  keySteering = false;
-  if (game.run && !pointer.down) release(game.run, false);
-}
-
 function doPulse(): void {
-  unlockAudio();
-  const run = game.run;
-  if (!run || game.paused) return;
-  if (!usePulse(run)) toast(`脈衝冷卻中（${Math.ceil(run.drone.pulseCd)} 秒）`, 'info');
+  const s = S();
+  if (game.paused || s.drone.dead >= 0) return;
+  if (!usePulse(s)) toast(`脈衝冷卻中（${Math.ceil(s.drone.pulseCd)} 秒）`, 'info');
 }
 
-function doEvac(): void {
-  unlockAudio();
-  const run = game.run;
-  if (!run || game.paused) return;
-  pointer.down = false;
-  toggleEvac(run);
-  if (run.drone.evac >= 0) toast(run.core.taken ? '撤離中…撐過 5 秒就帶著核心回家' : '撤離中…5 秒後帶回全部收穫', 'info');
+function doRecall(): void {
+  if (game.paused) return;
+  stopInput();
+  toggleRecall(S());
 }
 
-// ---- Loop -------------------------------------------------------------------
+// ---- Loop -------------------------------------------------------------------------
 
 function resize(): void {
   const r = stage.getBoundingClientRect();
@@ -328,67 +347,64 @@ let saveT = 0;
 function frame(now: number): void {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
-  const run = game.run;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  if (run) {
-    if (pointer.down && hover >= 0 && !game.paused) retarget(run, hover);
-    if (heldDirs.length && !game.paused) {
+  const s = S();
+  if (!game.paused) {
+    if (pointer.down && hover >= 0) {
+      if (pointer.building) {
+        if (hover !== pointer.lastBuilt && selected !== 'turret') {
+          pointer.lastBuilt = hover;
+          tryBuild(hover, true);
+        }
+      } else retarget(s, hover);
+    }
+    if (heldDirs.length) {
       keySteering = true;
-      steer(run, heldDirs[heldDirs.length - 1], false);
+      steer(s, heldDirs[heldDirs.length - 1], false);
     }
-    const res = game.tick(dt);
-    if (res) {
-      endRun(res);
-    } else {
-      if (run.prompt && !game.isPausedBy('panel') && !modalOpen()) openPanel();
-      layout(view, run, cssW, cssH, dt, snapCamera);
-      snapCamera = false;
-      if (pointer.inside || pointer.down) hover = screenToTile(view, pointer.x, pointer.y);
-      draw(ctx, run, view, { hover: game.paused ? -1 : hover, highlight, dt: game.paused ? 0 : dt, time: now / 1000 });
-      hudT += dt;
-      if (hudT > 0.08) {
-        hudT = 0;
-        updateHud(run);
-        showTip(!game.paused && hover >= 0 && (pointer.inside || pointer.down) ? tileInfo(run, hover) : null, pointer.x, pointer.y);
-      }
-      saveT += dt;
-      if (saveT > 3 && !game.paused) {
-        saveT = 0;
-        save();
-      }
-    }
-  } else {
-    ctx.fillStyle = '#0b090c';
-    ctx.fillRect(0, 0, cssW, cssH);
-    showTip(null, 0, 0);
+  }
+  game.tick(dt);
+  if (s.prompt && !game.isPausedBy('panel') && !modalOpen()) openPanel();
+  layout(view, s, cssW, cssH, dt, snapCamera);
+  snapCamera = false;
+  if (pointer.inside || pointer.down) hover = screenToTile(view, s, pointer.x, pointer.y);
+  const ghostTile = selected ? (pointer.inside && hover >= 0 ? hover : frontTile(s)) : -1;
+  draw(ctx, s, view, {
+    hover: game.paused ? -1 : hover,
+    ghost: selected && ghostTile >= 0 ? { tile: ghostTile, kind: selected, ok: !buildError(s, ghostTile, selected) } : null,
+    dt: game.paused ? 0 : dt,
+    time: now / 1000,
+    dpr,
+  });
+  hudT += dt;
+  if (hudT > 0.08) {
+    hudT = 0;
+    updateHud(s, selected);
+    showTip(!game.paused && hover >= 0 && pointer.inside && !selected ? tileInfo(s, hover) : null, pointer.x, pointer.y);
+  }
+  saveT += dt;
+  if (saveT > 5 && !game.paused) {
+    saveT = 0;
+    save();
   }
   requestAnimationFrame(frame);
 }
 
 function boot(): void {
-  const file = readSave();
-  meta = file?.meta ?? newMeta();
-  game = new Game(meta, file?.run ?? null);
-  setSound(meta.settings.sound);
-  setSink((s) => {
-    onSignal(s, game.run, meta.settings.numbers);
-    play(s);
-    if (s.t === 'toast') toast(s.text, s.tone);
-    else if (s.t === 'threat') toast(`${s.text} ${s.amount > 0 ? '+' : ''}${s.amount}`, s.amount > 0 ? 'threat' : 'good');
+  game = new Game(readSave() ?? newGame());
+  setSound(S().settings.sound);
+  setSink((sig) => {
+    const s = S();
+    onSignal(sig, s, s.settings.numbers);
+    play(sig);
+    if (sig.t === 'toast') toast(sig.text, sig.tone);
+    else if (sig.t === 'threat') toast(`${sig.text}：地心騷動 +${sig.amount}`, 'threat');
+    else if (sig.t === 'wave') toast(`第 ${sig.n} 波來襲！`, 'threat');
   });
   initModal();
   new ResizeObserver(resize).observe(stage);
   resize();
   setupInput();
-
-  if (game.run) {
-    game.pause('restore');
-    openModal(`<p class="eyebrow">已恢復</p><h2>上次的探索還在進行</h2><p>地圖、敵人、威脅與裝備都照存檔還原。</p><div class="panel-btns"><button type="button" class="primary" data-act="go" data-focus>繼續探索</button></div>`, () => {
-      closeModal();
-      game.resume('restore');
-    });
-  } else showBase();
-
+  if (!S().seenHelp) showIntro();
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       game.pause('hidden');

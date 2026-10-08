@@ -1,172 +1,182 @@
-// Canvas view: shapes only (no image assets). Every object is readable by shape,
-// not just colour: rock = bevelled square, ore = faceted gems, probe = white disc
-// with a drill line, relic = cyan concentric squares, crawler = triangle, armoured
-// = triangle with a shell ring, nest = pulsing ring.
+// Pixel renderer: the world is drawn at 1 art pixel per buffer pixel (16 px tiles,
+// 3/4 view: each block has a top face lifted by WH and a front face below it), then
+// scaled up with nearest-neighbour. Rows are drawn top to bottom with sprites in
+// between, so blocks in front hide the feet of whatever stands behind them.
 
-import { CAPACITOR, DEEP_ROW, ENEMY, EVAC_TIME, MAP_H, MAP_W, MID_ROW, NEST_HP, PULSE, REPULSOR, ROCK_HP, SIGNAL_RANGE, VISION } from './config';
-import { DIRS, idx, rng, T_BEDROCK, T_CORE, T_EMPTY, T_NEST, T_ORE, T_RELIC, T_ROCK, zoneOf, ZONE_NAME } from './map';
-import { canDig, has, pathFromTo, type Signal, tileX, tileY } from './sim';
-import type { Nest, RunState } from './state';
+import { BUILD, type BuildKind, MAP_H, MAP_W, RECALL_TIME, ROCK_HP, SIGNAL_RANGE, VISION } from './config';
+import { BASE_POS, CHAMBER, idx, inBounds, isWalkable, RIFTS, rng, T_BASE, T_ORE, T_RELIC, T_RIFT, T_ROCK, T_TURRET, T_WALL, zoneOf } from './map';
+import { GEM, INK, pixelLine, TP, textures, WH, ZONE_PAL } from './pixel';
+import { has, routeFrom, type Signal, tileX, tileY } from './sim';
+import { type GameState, maxBaseHp } from './state';
 
 export const FONT = '"Chakra Petch", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif';
 
-const C = {
-  bg: '#0b090c',
-  fog: '#100d11',
-  fogDot: '#18141a',
-  floor: ['#3a2c24', '#2f2630', '#26232f'],
-  rock: ['#7a6d61', '#5b5c63', '#3e4456'],
-  rockHi: ['#9a8b7c', '#787a83', '#56607a'],
-  rockLo: ['#4c4239', '#393a40', '#282c39'],
-  crack: '#191418',
-  bedrock: '#151217',
-  bedrockLine: '#231e27',
-  ore: '#f6b73c',
-  oreHi: '#ffe08a',
-  oreLo: '#a8701c',
-  deep: '#ff7d3b',
-  deepHi: '#ffc38a',
-  relic: '#9fe0ef',
-  relicDim: '#4a6a72',
-  core: '#eafcff',
-  enemy: '#b47ce0',
-  enemyHi: '#e6c8ff',
-  nest: '#a65fd6',
-  warn: '#ff6f8a',
-  probe: '#f6f1ea',
-  shield: '#7fd8ff',
-  text: '#fbf3e6',
-};
-
 export interface View {
-  ts: number; // tile size in CSS px
-  ox: number; // map x offset in CSS px
-  camY: number; // top row on screen (float)
-  w: number;
+  S: number; // CSS px per art pixel
+  bw: number; // buffer size in art pixels
+  bh: number;
+  camX: number; // camera top-left in art pixels
+  camY: number;
+  w: number; // CSS size
   h: number;
-  look: number; // manual scroll offset in tiles
+  lookX: number; // manual offset in art pixels
+  lookY: number;
 }
 
 export function newView(): View {
-  return { ts: 32, ox: 0, camY: 0, w: 0, h: 0, look: 0 };
+  return { S: 3, bw: 0, bh: 0, camX: 0, camY: 0, w: 0, h: 0, lookX: 0, lookY: 0 };
 }
 
-/** Fit the map width to the canvas (or follow the probe sideways on narrow screens) and ease the camera. */
-export function layout(v: View, run: RunState, w: number, h: number, dt: number, snap = false): void {
+export function layout(v: View, s: GameState, w: number, h: number, dt: number, snap = false): void {
   v.w = w;
   v.h = h;
-  v.ts = Math.max(22, Math.min(44, Math.floor(w / MAP_W)));
-  const k = snap ? 1 : Math.min(1, dt * 6);
-  const mapW = v.ts * MAP_W;
-  const ox = mapW <= w ? Math.floor((w - mapW) / 2) : Math.max(w - mapW, Math.min(0, w / 2 - run.drone.x * v.ts));
-  v.ox = mapW <= w ? ox : v.ox + (ox - v.ox) * k;
-  const rows = h / v.ts;
-  const minY = -0.5, maxY = Math.max(minY, MAP_H + 0.5 - rows);
-  v.look = Math.max(minY - run.drone.y, Math.min(maxY + rows - run.drone.y, v.look));
-  const target = Math.max(minY, Math.min(maxY, run.drone.y - rows * 0.45 + v.look));
-  v.camY = v.camY + (target - v.camY) * k;
+  v.S = Math.max(2, Math.round(Math.min(w / 330, h / 230)));
+  v.bw = Math.ceil(w / v.S);
+  v.bh = Math.ceil(h / v.S);
+  const d = s.drone;
+  let tx = d.x * TP - v.bw / 2 + v.lookX;
+  let ty = d.y * TP - v.bh / 2 + v.lookY;
+  const worldW = MAP_W * TP, worldH = MAP_H * TP;
+  tx = v.bw >= worldW + 32 ? (worldW - v.bw) / 2 : Math.max(-16, Math.min(worldW + 16 - v.bw, tx));
+  ty = v.bh >= worldH + 40 ? (worldH - v.bh) / 2 : Math.max(-24, Math.min(worldH + 16 - v.bh, ty));
+  const k = snap ? 1 : Math.min(1, dt * 7);
+  v.camX += (tx - v.camX) * k;
+  v.camY += (ty - v.camY) * k;
 }
 
-export function screenToTile(v: View, px: number, py: number): number {
-  const x = Math.floor((px - v.ox) / v.ts);
-  const y = Math.floor(py / v.ts + v.camY);
-  if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return -1;
-  return idx(x, y);
+/** Screen (CSS px inside the canvas) → tile. A block's lifted top face counts as that block. */
+export function screenToTile(v: View, s: GameState, px: number, py: number): number {
+  const wx = v.camX + px / v.S, wy = v.camY + py / v.S;
+  const x = Math.floor(wx / TP);
+  const yLift = Math.floor((wy + WH) / TP);
+  if (inBounds(x, yLift) && !isWalkable(s.world.kind[yLift * MAP_W + x])) return idx(x, yLift);
+  const y = Math.floor(wy / TP);
+  return inBounds(x, y) ? idx(x, y) : -1;
 }
 
-// ---- Effects --------------------------------------------------------------
+/** Tile centre → CSS px on screen. */
+export function tileToScreen(v: View, x: number, y: number): [number, number] {
+  return [(x * TP - Math.round(v.camX)) * v.S, (y * TP - Math.round(v.camY)) * v.S];
+}
 
-interface Particle { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string; size: number }
+// ---- Effects --------------------------------------------------------------------
+
+interface Particle { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string }
 interface Ring { x: number; y: number; r: number; t: number; color: string }
-interface Link { from: number; to: number; t: number; kind: 'resonance' | 'chain'; seed: number }
-interface Shot { x1: number; y1: number; x2: number; y2: number; t: number }
+interface Line { x1: number; y1: number; x2: number; y2: number; t: number; dur: number; color: string; jag: boolean }
 interface Float { x: number; y: number; text: string; color: string; t: number }
-interface Marker { x: number; y: number; t: number }
 
 const fx = {
   parts: [] as Particle[],
   rings: [] as Ring[],
-  links: [] as Link[],
-  shots: [] as Shot[],
+  lines: [] as Line[],
   floats: [] as Float[],
-  markers: [] as Marker[],
-  flash: 0, // probe flash (relic equipped / first use)
-  hurt: 0,
+  marks: [] as { x: number; y: number; t: number }[],
   shake: 0,
+  quake: 0,
+  hurt: 0,
+  flash: 0,
+  baseHit: 0,
+  muzzle: new Map<number, number>(),
 };
-
 const prand = rng(99);
 
-function burst(x: number, y: number, color: string, n: number, speed: number, size = 0.08): void {
+function burst(x: number, y: number, color: string, n: number, speed: number): void {
   for (let i = 0; i < n; i++) {
     const a = prand() * Math.PI * 2;
-    const s = speed * (0.4 + prand() * 0.8);
-    const life = 0.35 + prand() * 0.35;
-    fx.parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 0.6, life, max: life, color, size: size * (0.6 + prand()) });
+    const sp = speed * (0.4 + prand() * 0.8);
+    const life = 0.3 + prand() * 0.35;
+    fx.parts.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1, life, max: life, color });
   }
 }
 
-export function onSignal(s: Signal, run: RunState | null, numbers: boolean): void {
-  switch (s.t) {
+const tc = (t: number): [number, number] => [tileX(t) + 0.5, tileY(t) + 0.5];
+
+export function onSignal(sig: Signal, s: GameState | null, numbers: boolean): void {
+  switch (sig.t) {
     case 'break': {
-      const x = tileX(s.tile) + 0.5, y = tileY(s.tile) + 0.5;
-      const hard = run ? run.world.hard[s.tile] : 0;
-      burst(x, y, C.rock[hard], 9, 2.2);
-      if (s.ore) {
-        burst(x, y, s.ore > 1 ? C.deep : C.ore, 7, 2.6, 0.07);
-        if (numbers) fx.floats.push({ x, y, text: `+${s.ore}`, color: s.ore > 1 ? C.deepHi : C.oreHi, t: 0 });
+      const [x, y] = tc(sig.tile);
+      const zone = zoneOf(tileY(sig.tile));
+      burst(x, y, ['#a9865f', '#7a8698', '#7a6198'][zone], 8, 3);
+      if (sig.ore) {
+        burst(x, y, GEM[Math.min(2, sig.ore - 1)].c, 6, 3.5);
+        if (numbers) fx.floats.push({ x, y, text: `+${sig.ore}`, color: GEM[Math.min(2, sig.ore - 1)].hi, t: 0 });
       }
-      if (s.source !== 'drill') fx.shake = Math.max(fx.shake, 0.12);
+      if (sig.source === 'chain' || sig.source === 'resonance') fx.shake = Math.max(fx.shake, 0.1);
       break;
     }
     case 'dig':
-      if (prand() < 0.25) {
-        const x = tileX(s.tile) + 0.5, y = tileY(s.tile) + 0.5;
-        if (run) {
-          const dx = run.drone.x - x, dy = run.drone.y - y;
-          burst(x + dx * 0.45, y + dy * 0.45, '#ffd9a0', 1, 2.5, 0.05);
-        }
+      if (prand() < 0.2 && s) {
+        const [x, y] = tc(sig.tile);
+        burst(x + (s.drone.x - x) * 0.45, y + (s.drone.y - y) * 0.45, '#ffe2a8', 1, 3);
       }
       break;
-    case 'link':
-      fx.links.push({ from: s.from, to: s.to, t: 0, kind: s.kind, seed: prand() * 1000 });
+    case 'link': {
+      const [x1, y1] = tc(sig.from), [x2, y2] = tc(sig.to);
+      fx.lines.push({ x1, y1, x2, y2, t: 0, dur: 0.3, color: sig.kind === 'chain' ? '#ffe08a' : '#bdf3ff', jag: sig.kind === 'chain' });
       break;
+    }
     case 'shot':
-      fx.shots.push({ ...s, t: 0 });
+      fx.lines.push({ x1: sig.x1, y1: sig.y1, x2: sig.x2, y2: sig.y2, t: 0, dur: 0.1, color: sig.tower ? '#ffd27a' : '#fff3c4', jag: false });
+      if (sig.tower) fx.muzzle.set(idx(Math.floor(sig.x1), Math.floor(sig.y1)), 0.08);
       break;
     case 'ring':
-      fx.rings.push({ x: s.x, y: s.y, r: s.r, t: 0, color: s.kind === 'pulse' ? '#bdf3ff' : s.kind === 'cap' ? C.oreHi : '#8fb6ff' });
+      fx.rings.push({ x: sig.x, y: sig.y, r: sig.r, t: 0, color: sig.kind === 'pulse' ? '#bdf3ff' : sig.kind === 'cap' ? '#ffe08a' : '#8fb6ff' });
       break;
     case 'kill':
-      burst(s.x, s.y, C.enemy, s.kind === 'armored' ? 16 : 10, 2.4);
+      burst(sig.x, sig.y, '#b47ce0', sig.kind === 'armored' ? 14 : 9, 3);
       break;
     case 'hurt':
-      fx.hurt = 0.35;
-      fx.shake = Math.max(fx.shake, 0.1);
+      fx.hurt = 0.3;
+      fx.shake = Math.max(fx.shake, 0.08);
       break;
     case 'spawn':
-      burst(s.x, s.y, C.nest, 8, 1.6);
+      burst(sig.x, sig.y, '#ff7a3b', 8, 2.5);
       break;
-    case 'warn':
-      fx.markers.push({ x: s.x, y: s.y, t: 0 });
+    case 'quake':
+      fx.quake = 1.6;
       break;
-    case 'nest':
-      if (s.down) burst(tileX(s.tile) + 0.5, tileY(s.tile) + 0.5, C.nest, 22, 3);
+    case 'wave':
+      fx.quake = Math.max(fx.quake, 0.6);
       break;
+    case 'baseHit':
+      fx.baseHit = 0.15;
+      burst(BASE_POS.x + 1, BASE_POS.y + 1.6, '#9fe0ef', 2, 2);
+      break;
+    case 'fall':
+      fx.flash = 0.8;
+      fx.shake = 0.5;
+      break;
+    case 'built': {
+      const [x, y] = tc(sig.tile);
+      burst(x, y, '#c9d4d0', 6, 2);
+      break;
+    }
+    case 'smashed': {
+      const [x, y] = tc(sig.tile);
+      burst(x, y, '#8fa29e', 14, 3.5);
+      fx.shake = Math.max(fx.shake, 0.12);
+      break;
+    }
     case 'relic':
-      burst(s.x, s.y, s.relic ? C.relic : C.core, 26, 3.2);
-      fx.rings.push({ x: s.x, y: s.y, r: 3, t: 0, color: C.relic });
-      fx.flash = 0.6;
-      fx.shake = Math.max(fx.shake, 0.18);
-      break;
-    case 'first':
-      fx.flash = 0.6;
+      burst(sig.x, sig.y, '#9fe0ef', 22, 4);
+      fx.rings.push({ x: sig.x, y: sig.y, r: 3, t: 0, color: '#9fe0ef' });
+      fx.shake = Math.max(fx.shake, 0.15);
       break;
     case 'threat':
-      if (numbers && run) fx.floats.push({ x: run.drone.x, y: run.drone.y - 0.6, text: `威脅 ${s.amount > 0 ? '+' : ''}${s.amount}`, color: s.amount > 0 ? '#e3a6ff' : '#9fe8b0', t: 0 });
+      if (numbers && s) fx.floats.push({ x: s.drone.x, y: s.drone.y - 0.8, text: `騷動 +${sig.amount}`, color: '#e3a6ff', t: 0 });
       break;
-    case 'unreachable':
-      fx.markers.push({ x: tileX(s.tile) + 0.5, y: tileY(s.tile) + 0.5, t: 0.7 });
+    case 'unreachable': {
+      const [x, y] = tc(sig.tile);
+      fx.marks.push({ x, y, t: 0 });
+      break;
+    }
+    case 'death':
+      if (s) burst(s.drone.x, s.drone.y, '#f2b33d', 18, 4);
+      fx.shake = 0.25;
+      break;
+    case 'respawn':
+      fx.rings.push({ x: s ? s.drone.x : 0, y: s ? s.drone.y : 0, r: 1.5, t: 0, color: '#9fe0ef' });
       break;
     default:
       break;
@@ -174,8 +184,8 @@ export function onSignal(s: Signal, run: RunState | null, numbers: boolean): voi
 }
 
 export function clearFx(): void {
-  fx.parts.length = fx.rings.length = fx.links.length = fx.shots.length = fx.floats.length = fx.markers.length = 0;
-  fx.flash = fx.hurt = fx.shake = 0;
+  fx.parts.length = fx.rings.length = fx.lines.length = fx.floats.length = fx.marks.length = 0;
+  fx.shake = fx.quake = fx.hurt = fx.flash = fx.baseHit = 0;
 }
 
 function updateFx(dt: number): void {
@@ -183,669 +193,552 @@ function updateFx(dt: number): void {
     p.life -= dt;
     p.x += p.vx * dt;
     p.y += p.vy * dt;
-    p.vy += 6 * dt;
-    p.vx *= 0.96;
+    p.vy += 9 * dt;
   }
   fx.parts = fx.parts.filter((p) => p.life > 0);
   for (const r of fx.rings) r.t += dt / 0.4;
   fx.rings = fx.rings.filter((r) => r.t < 1);
-  for (const l of fx.links) l.t += dt / (l.kind === 'chain' ? 0.35 : 0.3);
-  fx.links = fx.links.filter((l) => l.t < 1);
-  for (const s of fx.shots) s.t += dt / 0.12;
-  fx.shots = fx.shots.filter((s) => s.t < 1);
+  for (const l of fx.lines) l.t += dt / l.dur;
+  fx.lines = fx.lines.filter((l) => l.t < 1);
   for (const f of fx.floats) f.t += dt / 0.9;
   fx.floats = fx.floats.filter((f) => f.t < 1);
-  for (const m of fx.markers) m.t += dt / 3;
-  fx.markers = fx.markers.filter((m) => m.t < 1);
-  fx.flash = Math.max(0, fx.flash - dt);
-  fx.hurt = Math.max(0, fx.hurt - dt);
+  for (const m of fx.marks) m.t += dt / 0.6;
+  fx.marks = fx.marks.filter((m) => m.t < 1);
+  for (const [k, v] of fx.muzzle) v - dt <= 0 ? fx.muzzle.delete(k) : fx.muzzle.set(k, v - dt);
   fx.shake = Math.max(0, fx.shake - dt);
+  fx.quake = Math.max(0, fx.quake - dt);
+  fx.hurt = Math.max(0, fx.hurt - dt);
+  fx.flash = Math.max(0, fx.flash - dt);
+  fx.baseHit = Math.max(0, fx.baseHit - dt);
 }
 
-// ---- Drawing ----------------------------------------------------------------
+// ---- Drawing ----------------------------------------------------------------------
 
 export interface DrawOpts {
   hover: number;
-  highlight: Nest | null;
+  ghost: { tile: number; kind: BuildKind; ok: boolean } | null;
   dt: number;
   time: number;
+  dpr: number;
 }
 
-const tileSeed = (i: number) => {
-  const r = rng(i * 7919 + 13);
-  return [r(), r(), r(), r(), r(), r()];
-};
-const seeds: number[][] = Array.from({ length: MAP_W * MAP_H }, (_, i) => tileSeed(i));
+const buf = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+const vari = (x: number, y: number) => ((x * 7919 + y * 104729) >>> 0) % 4;
+const enemyDir = new Map<number, { x: number; dir: 'left' | 'right' }>();
 
-export function draw(ctx: CanvasRenderingContext2D, run: RunState, v: View, o: DrawOpts): void {
+export function draw(main: CanvasRenderingContext2D, s: GameState, v: View, o: DrawOpts): void {
   updateFx(o.dt);
-  const { ts } = v;
-  const w = run.world;
-  const d = run.drone;
+  if (!buf) return;
+  const T = textures();
+  if (buf.width !== v.bw || buf.height !== v.bh) {
+    buf.width = v.bw;
+    buf.height = v.bh;
+  }
+  const b = buf.getContext('2d')!;
+  b.imageSmoothingEnabled = false;
+  const w = s.world;
+  const d = s.drone;
   const t = o.time;
-  ctx.save();
-  ctx.fillStyle = C.bg;
-  ctx.fillRect(0, 0, v.w, v.h);
-  if (fx.shake > 0) ctx.translate((prand() - 0.5) * fx.shake * ts * 0.6, (prand() - 0.5) * fx.shake * ts * 0.6);
+  let shx = 0, shy = 0;
+  const sh = Math.max(fx.shake, fx.quake * 0.5);
+  if (sh > 0) {
+    shx = Math.round((prand() - 0.5) * sh * 10);
+    shy = Math.round((prand() - 0.5) * sh * 10);
+  }
+  const cx = Math.round(v.camX) + shx, cy = Math.round(v.camY) + shy;
+  const X = (wx: number) => Math.round(wx * TP) - cx;
+  const Y = (wy: number) => Math.round(wy * TP) - cy;
+  b.fillStyle = '#07060a';
+  b.fillRect(0, 0, v.bw, v.bh);
 
-  const SX = (x: number) => v.ox + x * ts;
-  const SY = (y: number) => (y - v.camY) * ts;
-  const y0 = Math.max(0, Math.floor(v.camY) - 1);
-  const y1 = Math.min(MAP_H - 1, Math.ceil(v.camY + v.h / ts) + 1);
-  const cx = Math.floor(d.x), cy = Math.floor(d.y);
+  const x0 = Math.floor(cx / TP) - 1, x1 = Math.ceil((cx + v.bw) / TP) + 1;
+  const y0 = Math.floor(cy / TP) - 1, y1 = Math.ceil((cy + v.bh) / TP) + 2;
+  const solidAt = (x: number, y: number) => !inBounds(x, y) || !w.seen[idx(x, y)] || !isWalkable(w.kind[idx(x, y)]);
 
-  // Tiles.
-  const x0 = Math.max(0, Math.floor(-v.ox / ts) - 1);
-  const x1 = Math.min(MAP_W - 1, Math.ceil((v.w - v.ox) / ts) + 1);
+  // Pass 1: floors.
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
+      if (solidAt(x, y)) continue;
       const i = idx(x, y);
-      const k = w.kind[i];
-      const px = SX(x), py = SY(y);
-      const zone = zoneOf(y);
-      if (k === T_BEDROCK) {
-        drawBedrock(ctx, px, py, ts, w.seen[i] ? 1 : 0.65);
-        continue;
-      }
-      if (!w.seen[i]) {
-        ctx.fillStyle = C.fog;
-        ctx.fillRect(px, py, ts, ts);
-        const s = seeds[i];
-        ctx.fillStyle = C.fogDot;
-        ctx.fillRect(px + s[0] * ts * 0.8, py + s[1] * ts * 0.8, ts * 0.12, ts * 0.12);
-        if (w.scan[i]) drawScan(ctx, run, i, px, py, ts, t);
-        continue;
-      }
-      ctx.fillStyle = C.floor[zone];
-      ctx.fillRect(px, py, ts, ts);
-      if (k === T_ROCK || k === T_ORE) drawRock(ctx, px, py, ts, w.hard[i], w.hp[i] / ROCK_HP[w.hard[i]], seeds[i]);
-      if (k === T_ORE) drawOre(ctx, px, py, ts, w.ore[i] > 1, seeds[i]);
-      if (k === T_EMPTY) drawFloorShade(ctx, run, x, y, px, py, ts);
-      if (k === T_RELIC) {
-        const site = run.sites.find((s) => s.x === x && s.y === y);
-        drawRelic(ctx, px, py, ts, !!site?.activated, t);
-      }
-      if (k === T_CORE) drawCore(ctx, px, py, ts, t);
-      if (k === T_NEST) {
-        const n = run.nests.find((nn) => nn.x === x && nn.y === y);
-        if (n) drawNest(ctx, px, py, ts, n, t);
-      }
-      // Fog of war: explored but out of sight is dimmed.
-      if ((x - cx) ** 2 + (y - cy) ** 2 > VISION * VISION + 0.5) {
-        ctx.fillStyle = 'rgba(6, 4, 8, 0.42)';
-        ctx.fillRect(px, py, ts, ts);
+      const px = x * TP - cx, py = y * TP - cy;
+      const inChamber = x >= CHAMBER.x0 && x <= CHAMBER.x1 && y <= CHAMBER.y1;
+      if (w.kind[i] === T_RIFT) drawRift(b, px, py, t, x);
+      else b.drawImage(inChamber ? T.plate : T.floor[zoneOf(y)][vari(x, y)], px, py);
+      if (w.trap[i]) b.drawImage(T.trap, px, py);
+      if (solidAt(x, y - 1)) {
+        b.fillStyle = 'rgba(0,0,0,0.4)';
+        b.fillRect(px, py, TP, 3);
+        b.fillStyle = 'rgba(0,0,0,0.2)';
+        b.fillRect(px, py + 3, TP, 2);
       }
     }
   }
 
-  // Zone boundaries: a dashed line, the zone name and how much harder its rock is.
-  ctx.font = `600 ${Math.max(10, ts * 0.34)}px ${FONT}`;
-  ctx.textBaseline = 'middle';
-  ctx.textAlign = 'left';
-  const lx = Math.max(v.ox, 0) + 4;
-  ctx.fillStyle = 'rgba(251, 243, 230, 0.55)';
-  ctx.fillText('入口', lx, SY(0.5));
-  for (const [row, zone] of [[MID_ROW, 1], [DEEP_ROW, 2]] as const) {
-    const py = SY(row);
-    if (py < -ts || py > v.h + ts) continue;
-    ctx.save();
-    ctx.strokeStyle = 'rgba(251, 243, 230, 0.28)';
-    ctx.setLineDash([6, 6]);
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(v.ox, py);
-    ctx.lineTo(v.ox + MAP_W * ts, py);
-    ctx.stroke();
-    ctx.restore();
-    ctx.fillStyle = 'rgba(251, 243, 230, 0.7)';
-    ctx.fillText(`▼ ${ZONE_NAME[zone]}・岩石比上一層硬 ${Math.round((ROCK_HP[zone] / ROCK_HP[zone - 1] - 1) * 100)}%`, lx, py + ts * 0.3);
+  // Entities grouped by the row their feet are in.
+  type Ent = { row: number; draw: () => void };
+  const ents: Ent[] = [];
+  if (d.dead < 0) ents.push({ row: Math.floor(d.y), draw: () => drawMiner(b, s, X(d.x), Y(d.y), t) });
+  for (const e of s.enemies) ents.push({ row: Math.floor(e.y), draw: () => drawEnemy(b, e, X(e.x), Y(e.y), t) });
+
+  // Pass 2: blocks row by row, then the sprites standing in that row.
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      if (!solidAt(x, y)) continue;
+      drawBlock(b, s, x, y, x * TP - cx, y * TP - cy, t, solidAt);
+    }
+    for (const e of ents) if (e.row === y) e.draw();
   }
 
-  // Lens: nest ranges as dashed outlines.
-  if (has(run, 'lens')) {
-    for (const n of run.nests) {
-      if (n.state === 'destroyed' || !w.scan[idx(n.x, n.y)]) continue;
-      ctx.save();
-      ctx.strokeStyle = 'rgba(180, 124, 224, 0.55)';
-      ctx.setLineDash([ts * 0.15, ts * 0.12]);
-      ctx.lineWidth = 1.5;
-      for (const z of n.zone) ctx.strokeRect(SX(tileX(z)) + 2, SY(tileY(z)) + 2, ts - 4, ts - 4);
-      ctx.restore();
+  // Ghost of the building about to be placed.
+  if (o.ghost && o.ghost.tile >= 0) {
+    const gx = tileX(o.ghost.tile) * TP - cx, gy = tileY(o.ghost.tile) * TP - cy;
+    b.globalAlpha = 0.6;
+    if (o.ghost.kind === 'trap') b.drawImage(T.trap, gx, gy);
+    else {
+      b.drawImage(o.ghost.kind === 'wall' ? T.wallTop : T.metalTop, gx, gy - WH);
+      b.drawImage(o.ghost.kind === 'wall' ? T.wallFront : T.metalFront, gx, gy + TP - WH);
+    }
+    b.globalAlpha = 1;
+    b.strokeStyle = o.ghost.ok ? '#93d49d' : '#ff7f93';
+    b.strokeRect(gx + 0.5, gy - (o.ghost.kind === 'trap' ? 0 : WH) + 0.5, TP - 1, TP - 1 + (o.ghost.kind === 'trap' ? 0 : WH));
+  }
+
+  // Hover and dig target outlines.
+  const outline = (tile: number, col: string, dashed: boolean) => {
+    const lifted = !isWalkable(w.kind[tile]) || !w.seen[tile];
+    const ox = tileX(tile) * TP - cx, oy = tileY(tile) * TP - cy - (lifted ? WH : 0);
+    const hgt = TP + (lifted ? WH : 0);
+    b.fillStyle = col;
+    if (!dashed) {
+      b.fillRect(ox, oy, TP, 1); b.fillRect(ox, oy + hgt - 1, TP, 1);
+      b.fillRect(ox, oy, 1, hgt); b.fillRect(ox + TP - 1, oy, 1, hgt);
+      return;
+    }
+    for (const [ax, ay] of [[ox, oy], [ox + TP - 4, oy], [ox, oy + hgt - 1], [ox + TP - 4, oy + hgt - 1]]) b.fillRect(ax, ay, 4, 1);
+    for (const [ax, ay] of [[ox, oy], [ox + TP - 1, oy], [ox, oy + hgt - 4], [ox + TP - 1, oy + hgt - 4]]) b.fillRect(ax, ay, 1, 4);
+  };
+  if (o.hover >= 0 && !o.ghost) outline(o.hover, 'rgba(255,255,255,0.7)', false);
+  if (d.dig >= 0) outline(d.dig, '#ffe08a', true);
+
+  // Monster routes: always with the echo lens, and during the quake warning.
+  if (has(s, 'lens') || s.wave.announced || fx.quake > 0) {
+    const blink = Math.sin(t * 10) > -0.3;
+    if (blink) {
+      for (const r of RIFTS) {
+        if (!w.seen[idx(r.x, r.y)] && !w.scan[idx(r.x, r.y)] && !s.wave.announced) continue;
+        const route = routeFrom(s, idx(r.x, r.y));
+        for (let k = 1; k < route.length; k++) {
+          if (k % 2) continue;
+          const [ax, ay] = tc(route[k - 1]), [bx, by] = tc(route[k]);
+          pixelLine(b, X(ax), Y(ay), X(bx), Y(by), 'rgba(255,90,110,0.85)');
+        }
+      }
     }
   }
-
-  // Relic panel preview: mark the nest that would wake, even if unexplored.
-  if (o.highlight) {
-    const n = o.highlight;
-    const px = SX(n.x + 0.5), py = SY(n.y + 0.5);
-    const pulse = 0.5 + 0.5 * Math.sin(t * 6);
-    ctx.save();
-    ctx.strokeStyle = C.warn;
-    ctx.lineWidth = 2;
-    ctx.setLineDash([6, 5]);
-    ctx.beginPath();
-    ctx.arc(px, py, ts * (1.1 + pulse * 0.25), 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = C.warn;
-    ctx.font = `700 ${Math.max(11, ts * 0.36)}px ${FONT}`;
-    ctx.textAlign = 'center';
-    ctx.fillText(`將喚醒：${n.name}`, px, py - ts * 1.6);
-    ctx.restore();
-  }
-
-  // Warnings: first-spawn path from an awakened nest, and pending warning spawns.
-  for (const n of run.nests) {
-    if (n.warn <= 0 || n.state !== 'awake') continue;
-    const path = pathFromTo(run, idx(n.x, n.y));
-    const on = Math.sin(t * 14) > -0.2;
-    if (on && path.length > 1) {
-      ctx.save();
-      ctx.strokeStyle = 'rgba(255, 111, 138, 0.85)';
-      ctx.lineWidth = Math.max(2, ts * 0.1);
-      ctx.setLineDash([ts * 0.25, ts * 0.18]);
-      ctx.lineDashOffset = -t * ts * 2;
-      ctx.beginPath();
-      path.forEach((p, k) => (k ? ctx.lineTo : ctx.moveTo).call(ctx, SX(tileX(p) + 0.5), SY(tileY(p) + 0.5)));
-      ctx.stroke();
-      ctx.restore();
-    }
-  }
-  for (const p of run.pending) {
-    if (p.kind !== 'spawn') continue;
-    drawWarnMarker(ctx, SX(tileX(p.tile) + 0.5), SY(tileY(p.tile) + 0.5), ts, t);
-  }
-  for (const m of fx.markers) {
-    if (m.t >= 0.7) {
-      // Unreachable flash: short red cross.
-      const a = 1 - (m.t - 0.7) / 0.3;
-      ctx.save();
-      ctx.globalAlpha = a;
-      ctx.strokeStyle = C.warn;
-      ctx.lineWidth = 2;
-      const px = SX(m.x), py = SY(m.y), r = ts * 0.25;
-      ctx.beginPath();
-      ctx.moveTo(px - r, py - r); ctx.lineTo(px + r, py + r);
-      ctx.moveTo(px + r, py - r); ctx.lineTo(px - r, py + r);
-      ctx.stroke();
-      ctx.restore();
-    }
-  }
-
-  // Hover and dig target.
-  if (o.hover >= 0) {
-    const hk = w.kind[o.hover];
-    const ok = hk === T_EMPTY || (w.seen[o.hover] && canDig(run, o.hover));
-    ctx.strokeStyle = ok ? 'rgba(251, 243, 230, 0.75)' : 'rgba(255, 111, 138, 0.6)';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(SX(tileX(o.hover)) + 1.5, SY(tileY(o.hover)) + 1.5, ts - 3, ts - 3);
-  }
-  if (d.dig >= 0) {
-    ctx.strokeStyle = 'rgba(255, 224, 138, 0.9)';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([4, 3]);
-    ctx.strokeRect(SX(tileX(d.dig)) + 2, SY(tileY(d.dig)) + 2, ts - 4, ts - 4);
-    ctx.setLineDash([]);
-  }
-  if (d.path.length) {
-    const last = d.path[d.path.length - 1];
-    ctx.fillStyle = 'rgba(251, 243, 230, 0.35)';
-    ctx.beginPath();
-    ctx.arc(SX(tileX(last) + 0.5), SY(tileY(last) + 0.5), ts * 0.1, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // Enemies.
-  for (const e of run.enemies) drawEnemy(ctx, SX(e.x), SY(e.y), ts, e.kind, d.x - e.x, d.y - e.y, e.hp / ENEMY[e.kind].hp, e.hit > 0, e.stun > 0);
-
-  // Probe.
-  drawProbe(ctx, run, SX(d.x), SY(d.y), ts, t);
 
   // Effects.
-  for (const l of fx.links) {
-    const a = 1 - l.t;
-    const x1 = SX(tileX(l.from) + 0.5), y1 = SY(tileY(l.from) + 0.5), x2 = SX(tileX(l.to) + 0.5), y2 = SY(tileY(l.to) + 0.5);
-    ctx.save();
-    ctx.globalAlpha = a;
-    ctx.lineWidth = l.kind === 'chain' ? 2.5 : 3;
-    ctx.strokeStyle = l.kind === 'chain' ? C.oreHi : '#bdf3ff';
-    ctx.shadowColor = ctx.strokeStyle;
-    ctx.shadowBlur = 8;
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    if (l.kind === 'chain') {
-      const r = rng(Math.floor(l.seed + l.t * 10));
-      for (let k = 1; k < 4; k++) {
-        const f = k / 4;
-        ctx.lineTo(x1 + (x2 - x1) * f + (r() - 0.5) * ts * 0.4, y1 + (y2 - y1) * f + (r() - 0.5) * ts * 0.4);
+  for (const l of fx.lines) {
+    b.globalAlpha = 1 - l.t;
+    if (l.jag) {
+      const r = rng(Math.floor(l.x1 * 97 + l.y2 * 13 + l.t * 8));
+      let px = X(l.x1), py = Y(l.y1);
+      for (let k = 1; k <= 3; k++) {
+        const nx = k === 3 ? X(l.x2) : Math.round(X(l.x1) + (X(l.x2) - X(l.x1)) * (k / 3) + (r() - 0.5) * 6);
+        const ny = k === 3 ? Y(l.y2) : Math.round(Y(l.y1) + (Y(l.y2) - Y(l.y1)) * (k / 3) + (r() - 0.5) * 6);
+        pixelLine(b, px, py, nx, ny, l.color);
+        px = nx; py = ny;
+      }
+    } else pixelLine(b, X(l.x1), Y(l.y1) - 4, X(l.x2), Y(l.y2) - 3, l.color);
+  }
+  b.globalAlpha = 1;
+  for (const r of fx.rings) {
+    b.globalAlpha = 1 - r.t;
+    b.strokeStyle = r.color;
+    b.lineWidth = 1;
+    b.beginPath();
+    b.arc(X(r.x) + 0.5, Y(r.y) + 0.5, r.r * TP * (0.3 + 0.7 * r.t), 0, Math.PI * 2);
+    b.stroke();
+  }
+  b.globalAlpha = 1;
+  for (const p of fx.parts) {
+    b.fillStyle = p.color;
+    b.fillRect(X(p.x), Y(p.y) - 4, p.life > p.max * 0.5 ? 2 : 1, p.life > p.max * 0.5 ? 2 : 1);
+  }
+  for (const m of fx.marks) {
+    b.fillStyle = `rgba(255,111,138,${1 - m.t})`;
+    const mx = X(m.x), my = Y(m.y) - 3;
+    for (let k = -3; k <= 3; k++) { b.fillRect(mx + k, my + k, 1, 1); b.fillRect(mx + k, my - k, 1, 1); }
+  }
+
+  drawLighting(b, s, v, cx, cy, t);
+  drawSignals(b, s, X(d.x), Y(d.y) - 6, t);
+
+  // Scale up.
+  main.setTransform(1, 0, 0, 1, 0, 0);
+  main.imageSmoothingEnabled = false;
+  main.drawImage(buf, 0, 0, v.bw * v.S * o.dpr, v.bh * v.S * o.dpr);
+  main.setTransform(o.dpr, 0, 0, o.dpr, 0, 0);
+
+  // Full-resolution overlays: floating numbers, minimap, vignettes.
+  main.font = `700 ${Math.max(12, v.S * 5)}px ${FONT}`;
+  main.textAlign = 'center';
+  main.textBaseline = 'middle';
+  for (const f of fx.floats) {
+    main.globalAlpha = 1 - f.t * f.t;
+    main.fillStyle = INK;
+    const fxp = X(f.x) * v.S, fyp = (Y(f.y) - 10 - f.t * 10) * v.S;
+    main.fillText(f.text, fxp + 1, fyp + 1);
+    main.fillStyle = f.color;
+    main.fillText(f.text, fxp, fyp);
+  }
+  main.globalAlpha = 1;
+  if (d.dead >= 0) {
+    main.fillStyle = '#fbf3e6';
+    main.font = `700 ${Math.max(14, v.S * 6)}px ${FONT}`;
+    main.fillText(`探機重建中… ${Math.ceil(d.dead)}`, v.w / 2, v.h * 0.4);
+  }
+  drawMinimap(main, s, v);
+  if (fx.hurt > 0 || fx.flash > 0) {
+    const a = Math.max(fx.hurt * 0.9, fx.flash * 0.7);
+    const g = main.createRadialGradient(v.w / 2, v.h / 2, Math.min(v.w, v.h) * 0.3, v.w / 2, v.h / 2, Math.max(v.w, v.h) * 0.75);
+    g.addColorStop(0, 'rgba(255,60,80,0)');
+    g.addColorStop(1, `rgba(255,60,80,${a})`);
+    main.fillStyle = g;
+    main.fillRect(0, 0, v.w, v.h);
+  }
+}
+
+function drawRift(b: CanvasRenderingContext2D, px: number, py: number, t: number, seed: number): void {
+  b.fillStyle = '#2a0e12';
+  b.fillRect(px, py, TP, TP);
+  const r = rng(seed * 31 + 7);
+  for (let k = 0; k < 18; k++) {
+    const x = Math.floor(r() * TP), y = Math.floor(r() * TP);
+    const glow = 0.5 + 0.5 * Math.sin(t * 4 + k);
+    b.fillStyle = glow > 0.6 ? '#ffb347' : '#e0442a';
+    b.fillRect(px + x, py + y, 1 + (k % 3 === 0 ? 1 : 0), 1);
+  }
+  b.fillStyle = `rgba(255,120,60,${0.15 + 0.1 * Math.sin(t * 3)})`;
+  b.fillRect(px + 2, py + 2, TP - 4, TP - 4);
+}
+
+function drawBlock(
+  b: CanvasRenderingContext2D, s: GameState, x: number, y: number, px: number, py: number, t: number,
+  solidAt: (x: number, y: number) => boolean,
+): void {
+  const T = textures();
+  const w = s.world;
+  const zone = zoneOf(Math.max(0, Math.min(MAP_H - 1, y)));
+  const v = vari(x, y);
+  const i = inBounds(x, y) ? idx(x, y) : -1;
+  const k = i >= 0 ? w.kind[i] : T_ROCK;
+  const known = i >= 0 && w.seen[i];
+
+  if (!known) {
+    b.fillStyle = '#100d15';
+    b.fillRect(px, py - WH, TP, TP);
+    b.fillStyle = '#0b090f';
+    b.fillRect(px, py + TP - WH, TP, WH);
+    if (i >= 0 && w.scan[i] && (k === T_ORE || k === T_RELIC || k === T_RIFT)) {
+      // Lens outline of something not yet seen.
+      b.fillStyle = k === T_ORE ? GEM[Math.min(2, w.ore[i] - 1)].c : k === T_RIFT ? '#ff7a3b' : '#9fe0ef';
+      b.globalAlpha = 0.5 + 0.2 * Math.sin(t * 3 + x);
+      b.fillRect(px + 6, py - WH + 6, 4, 4);
+      b.globalAlpha = 1;
+    }
+    return;
+  }
+  if (k === T_BASE) {
+    if (x === BASE_POS.x && y === BASE_POS.y + 1) drawBase(b, s, px, py - TP, t);
+    return;
+  }
+  if (k === T_ROCK || k === T_ORE) {
+    b.drawImage(T.rockTop[zone][v], px, py - WH);
+    b.drawImage(T.rockFront[zone][v], px, py + TP - WH);
+    if (k === T_ORE) {
+      const g = Math.min(2, w.ore[i] - 1);
+      b.drawImage(T.oreTop[g][v], px, py - WH);
+      b.drawImage(T.oreFront[g], px, py + TP - WH);
+    }
+    const frac = w.hp[i] / ROCK_HP[w.hard[i]];
+    if (frac < 0.98) cracks(b, px, py - WH, 1 - frac, x * 13 + y);
+  } else if (k === T_WALL) {
+    b.drawImage(T.wallTop, px, py - WH);
+    b.drawImage(T.wallFront, px, py + TP - WH);
+    const frac = w.hp[i] / BUILD.wall.hp;
+    if (frac < 0.98) cracks(b, px, py - WH, 1 - frac, i);
+  } else if (k === T_TURRET) {
+    b.drawImage(T.metalTop, px, py - WH);
+    b.drawImage(T.metalFront, px, py + TP - WH);
+    const tw = s.towers[i];
+    const a = tw ? tw.angle : Math.PI / 2;
+    const hx = px + 8, hy = py + 7 - WH;
+    b.fillStyle = INK;
+    b.fillRect(hx - 4, hy - 3, 8, 7);
+    b.fillStyle = '#2f363d';
+    b.fillRect(hx - 3, hy - 3, 6, 6);
+    b.fillStyle = '#4a545e';
+    b.fillRect(hx - 3, hy - 3, 6, 2);
+    pixelLine(b, hx, hy, Math.round(hx + Math.cos(a) * 7), Math.round(hy + Math.sin(a) * 7), '#cfd6dc');
+    if (fx.muzzle.has(i)) {
+      b.fillStyle = '#fff3c4';
+      b.fillRect(Math.round(hx + Math.cos(a) * 8) - 1, Math.round(hy + Math.sin(a) * 8) - 1, 3, 3);
+    }
+    b.fillStyle = Math.sin(t * 6) > 0 ? '#93d49d' : '#3f6f47';
+    b.fillRect(hx - 1, hy + 2, 2, 1);
+    const frac = w.hp[i] / BUILD.turret.hp;
+    if (frac < 0.98) cracks(b, px, py - WH, 1 - frac, i);
+  } else if (k === T_RELIC) {
+    const site = s.sites.find((p) => p.x === x && p.y === y);
+    b.drawImage(site?.activated ? T.relicDim : T.relicTop, px, py - WH);
+    b.drawImage(T.relicFront, px, py + TP - WH);
+    if (site && !site.activated && Math.sin(t * 3) > 0) {
+      b.fillStyle = '#eafcff';
+      b.fillRect(px + 7, py - WH + 7, 2, 2);
+    }
+  }
+  // Rims where the block meets an open tunnel.
+  if (k !== T_TURRET && k !== T_WALL && k !== T_RELIC) {
+    const rim = ZONE_PAL[zone].rim;
+    b.fillStyle = rim;
+    if (!solidAt(x, y - 1)) b.fillRect(px, py - WH, TP, 1);
+    if (!solidAt(x - 1, y)) b.fillRect(px, py - WH, 1, TP);
+    if (!solidAt(x + 1, y)) b.fillRect(px + TP - 1, py - WH, 1, TP);
+    b.fillStyle = INK;
+    if (!solidAt(x - 1, y)) b.fillRect(px, py + TP - WH, 1, WH);
+    if (!solidAt(x + 1, y)) b.fillRect(px + TP - 1, py + TP - WH, 1, WH);
+  }
+}
+
+function cracks(b: CanvasRenderingContext2D, px: number, py: number, dmg: number, seed: number): void {
+  const r = rng(seed * 17 + 3);
+  b.fillStyle = INK;
+  const n = 1 + Math.floor(dmg * 4);
+  for (let k = 0; k < n; k++) {
+    let x = 8, y = 8;
+    const ang = r() * Math.PI * 2;
+    const len = 3 + Math.floor(dmg * 6);
+    for (let s = 0; s < len; s++) {
+      b.fillRect(px + Math.round(x), py + Math.round(y), 1, 1);
+      x += Math.cos(ang + (r() - 0.5));
+      y += Math.sin(ang + (r() - 0.5));
+    }
+  }
+}
+
+function drawBase(b: CanvasRenderingContext2D, s: GameState, px: number, py: number, t: number): void {
+  // 32 × (32 + WH): a drilling rig with a glowing core window.
+  const top = py - WH;
+  b.fillStyle = INK;
+  b.fillRect(px, top + 4, 32, 28 + WH - 4);
+  b.fillStyle = '#3a414a';
+  b.fillRect(px + 1, top + 5, 30, 26);
+  b.fillStyle = '#55606b';
+  b.fillRect(px + 1, top + 5, 30, 4);
+  b.fillStyle = '#2b3138';
+  b.fillRect(px + 1, top + 31, 30, WH - 1);
+  b.fillStyle = '#f2b33d';
+  for (let x = 2; x < 30; x += 6) b.fillRect(px + x, top + 32, 3, 2);
+  // Mast.
+  b.fillStyle = INK;
+  b.fillRect(px + 14, top, 4, 6);
+  b.fillStyle = Math.sin(t * 4) > 0 ? '#ff5a6e' : '#7a2a35';
+  b.fillRect(px + 15, top, 2, 2);
+  // Core window.
+  const pulse = 0.5 + 0.5 * Math.sin(t * 2.5);
+  b.fillStyle = INK;
+  b.fillRect(px + 9, top + 12, 14, 14);
+  b.fillStyle = fx.baseHit > 0 ? '#ff7f93' : pulse > 0.5 ? '#9fe0ef' : '#6fc2d6';
+  b.fillRect(px + 10, top + 13, 12, 12);
+  b.fillStyle = '#eafcff';
+  b.fillRect(px + 14, top + 17, 4, 4);
+  // Bolts.
+  b.fillStyle = '#7d8894';
+  for (const [x, y] of [[3, 11], [27, 11], [3, 27], [27, 27]]) b.fillRect(px + x, top + y, 2, 2);
+  // Damage.
+  const frac = s.base.hp / maxBaseHp(s);
+  if (frac < 0.6) cracks(b, px + 4, top + 6, 1 - frac, 5);
+  if (frac < 0.3) cracks(b, px + 18, top + 14, 1 - frac, 9);
+  // HP bar.
+  b.fillStyle = INK;
+  b.fillRect(px + 2, top - 5, 28, 3);
+  b.fillStyle = frac > 0.35 ? '#9fe0ef' : '#ff7f93';
+  b.fillRect(px + 3, top - 4, Math.max(0, Math.round(26 * frac)), 1);
+}
+
+function drawMiner(b: CanvasRenderingContext2D, s: GameState, x: number, y: number, t: number): void {
+  const T = textures();
+  const d = s.drone;
+  const face = (['up', 'right', 'down', 'left'] as const)[d.face];
+  const moving = d.path.length > 0;
+  const frames = T.miner[face];
+  const fr = moving ? Math.floor(t * 8) % 2 : 0;
+  const img = frames[fr];
+  const sx = x - Math.floor(img.width / 2), sy = y + 3 - img.height - (moving && fr ? 1 : 0);
+  // Shadow.
+  b.fillStyle = 'rgba(0,0,0,0.35)';
+  b.fillRect(x - 5, y + 2, 10, 2);
+  if (d.recall >= 0) {
+    const p = Math.min(1, d.recall / RECALL_TIME);
+    b.fillStyle = `rgba(159,224,239,${0.25 + p * 0.5})`;
+    b.fillRect(x - 4, y - 40, 8, 42);
+  }
+  const digging = d.dig >= 0 && !moving;
+  const drawPick = () => {
+    const base = [-Math.PI / 2, 0, Math.PI / 2, Math.PI][d.face];
+    const swing = digging ? Math.sin(t * 16) * 0.9 : 0.6;
+    const a = base + swing - 0.3;
+    const hx = x + (d.face === 1 ? 3 : d.face === 3 ? -3 : 0), hy = y - 6;
+    const ex = Math.round(hx + Math.cos(a) * 8), ey = Math.round(hy + Math.sin(a) * 8);
+    pixelLine(b, hx, hy, ex, ey, '#8a5a36');
+    const pa = a + Math.PI / 2;
+    pixelLine(b, Math.round(ex - Math.cos(pa) * 3), Math.round(ey - Math.sin(pa) * 3), Math.round(ex + Math.cos(pa) * 3), Math.round(ey + Math.sin(pa) * 3), '#c9d1d9');
+  };
+  if (d.face === 0) drawPick();
+  if (d.hurt > 0 && Math.floor(t * 20) % 2) b.globalAlpha = 0.45;
+  b.drawImage(img, sx, sy);
+  b.globalAlpha = 1;
+  if (d.face !== 0) drawPick();
+  if (s.bio > 0) {
+    b.fillStyle = '#93d49d';
+    b.fillRect(x - 1, sy - 3, 2, 2);
+  }
+}
+
+function drawEnemy(b: CanvasRenderingContext2D, e: GameState['enemies'][number], x: number, y: number, t: number): void {
+  const T = textures();
+  const prev = enemyDir.get(e.id);
+  let dir: 'left' | 'right' = prev?.dir ?? 'right';
+  if (prev && Math.abs(e.x - prev.x) > 0.002) dir = e.x > prev.x ? 'right' : 'left';
+  enemyDir.set(e.id, { x: e.x, dir });
+  const set = e.kind === 'armored' ? T.armored : T.crawler;
+  const img = set[dir][Math.floor(t * 9 + e.id) % 2];
+  const jitter = e.chew > 0 ? Math.round(Math.sin(t * 40)) : 0;
+  b.fillStyle = 'rgba(0,0,0,0.35)';
+  b.fillRect(x - img.width / 2 + 1, y + 2, img.width - 2, 2);
+  if (e.hit > 0) b.globalAlpha = 0.55;
+  b.drawImage(img, x - Math.floor(img.width / 2) + jitter, y + 3 - img.height);
+  b.globalAlpha = 1;
+  if (e.hp < e.maxHp) {
+    b.fillStyle = INK;
+    b.fillRect(x - 6, y - img.height - 1, 12, 3);
+    b.fillStyle = '#e6c8ff';
+    b.fillRect(x - 5, y - img.height, Math.max(0, Math.round(10 * (e.hp / e.maxHp))), 1);
+  }
+  if (e.stun > 0) {
+    b.fillStyle = '#bdf3ff';
+    b.fillRect(x - 2, y - img.height - 3, 1, 1);
+    b.fillRect(x + 2, y - img.height - 4, 1, 1);
+  }
+}
+
+/** Darkness with a lamp around the miner, glows at the base, turrets, rifts and relics. */
+function drawLighting(b: CanvasRenderingContext2D, s: GameState, v: View, cx: number, cy: number, t: number): void {
+  const w = s.world;
+  const d = s.drone;
+  const lights: { x: number; y: number; r: number; i: number }[] = [];
+  if (d.dead < 0) lights.push({ x: d.x, y: d.y, r: VISION + 1.5 + Math.sin(t * 7) * 0.08, i: 1 });
+  lights.push({ x: BASE_POS.x + 1, y: BASE_POS.y + 1, r: 5, i: 0.95 });
+  for (const key of Object.keys(s.towers)) {
+    const k = Number(key);
+    lights.push({ x: tileX(k) + 0.5, y: tileY(k) + 0.5, r: 2.6, i: 0.7 });
+  }
+  for (const r of RIFTS) if (w.seen[idx(r.x, r.y)]) lights.push({ x: r.x + 0.5, y: r.y + 0.5, r: 3.2, i: 0.8 });
+  for (const p of s.sites) if (!p.activated && w.seen[idx(p.x, p.y)]) lights.push({ x: p.x + 0.5, y: p.y + 0.5, r: 2.2, i: 0.6 });
+  const CELL = 4;
+  for (let sy = 0; sy < v.bh; sy += CELL) {
+    for (let sx = 0; sx < v.bw; sx += CELL) {
+      const wx = (cx + sx + CELL / 2) / TP, wy = (cy + sy + CELL / 2 + WH / 2) / TP;
+      let light = 0;
+      for (const l of lights) {
+        const dd = Math.hypot(wx - l.x, wy - l.y);
+        if (dd < l.r) light = Math.max(light, (1 - dd / l.r) ** 0.8 * l.i);
+      }
+      const tx = Math.floor(wx), ty = Math.floor(wy);
+      const seen = inBounds(tx, ty) && w.seen[idx(tx, ty)];
+      const a = Math.min(seen ? 0.72 : 0.9, 0.92 * (1 - Math.min(1, light * 1.6)));
+      if (a <= 0.01) continue;
+      b.fillStyle = `rgba(4,3,8,${a.toFixed(2)})`;
+      b.fillRect(sx, sy, CELL, CELL);
+    }
+  }
+  // Coloured glows.
+  b.globalCompositeOperation = 'lighter';
+  const glow = (x: number, y: number, r: number, col: string) => {
+    const g = b.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, col);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    b.fillStyle = g;
+    b.fillRect(x - r, y - r, r * 2, r * 2);
+  };
+  if (d.dead < 0) glow(d.x * TP - cx, d.y * TP - cy - 6, 40, 'rgba(255,200,120,0.10)');
+  for (const r of RIFTS) if (w.seen[idx(r.x, r.y)]) glow((r.x + 0.5) * TP - cx, (r.y + 0.5) * TP - cy, 44, `rgba(255,80,40,${0.22 + 0.06 * Math.sin(t * 3)})`);
+  glow((BASE_POS.x + 1) * TP - cx, (BASE_POS.y + 1) * TP - cy - 4, 46, 'rgba(120,220,255,0.12)');
+  b.globalCompositeOperation = 'source-over';
+}
+
+/** Fuzzy direction hints toward relic sites not yet seen. */
+function drawSignals(b: CanvasRenderingContext2D, s: GameState, x: number, y: number, t: number): void {
+  const d = s.drone;
+  if (d.dead >= 0) return;
+  s.sites.forEach((p, i) => {
+    if (p.activated || s.world.seen[idx(p.x, p.y)]) return;
+    const dist = Math.hypot(p.x + 0.5 - d.x, p.y + 0.5 - d.y);
+    if (dist > SIGNAL_RANGE) return;
+    const a = Math.atan2(p.y + 0.5 - d.y, p.x + 0.5 - d.x) + (((i * 37) % 10) / 10 - 0.5) * 0.5;
+    const rr = 14 + Math.sin(t * 4 + i);
+    const ax = Math.round(x + Math.cos(a) * rr), ay = Math.round(y + Math.sin(a) * rr);
+    b.globalAlpha = 0.4 + 0.5 * (1 - dist / SIGNAL_RANGE);
+    b.fillStyle = '#9fe0ef';
+    b.fillRect(ax - 1, ay - 1, 3, 3);
+    b.fillRect(Math.round(ax + Math.cos(a) * 3), Math.round(ay + Math.sin(a) * 3), 1, 1);
+    b.globalAlpha = 1;
+  });
+}
+
+let mini: HTMLCanvasElement | null = null;
+let miniT = 0;
+
+function drawMinimap(main: CanvasRenderingContext2D, s: GameState, v: View): void {
+  const k = v.w < 600 ? 2 : 3;
+  if (!mini) mini = document.createElement('canvas');
+  const now = performance.now();
+  if (now - miniT > 200 || mini.width !== MAP_W * k) {
+    miniT = now;
+    mini.width = MAP_W * k;
+    mini.height = MAP_H * k;
+    const m = mini.getContext('2d')!;
+    m.fillStyle = 'rgba(8,6,12,0.85)';
+    m.fillRect(0, 0, mini.width, mini.height);
+    const w = s.world;
+    for (let y = 0; y < MAP_H; y++) {
+      for (let x = 0; x < MAP_W; x++) {
+        const i = idx(x, y);
+        if (!w.seen[i]) continue;
+        const kk = w.kind[i];
+        m.fillStyle = isWalkable(kk) ? (kk === T_RIFT ? '#ff5a3b' : '#6e5a4c')
+          : kk === T_WALL ? '#9fb3ae' : kk === T_TURRET ? '#f2b33d' : kk === T_RELIC ? '#9fe0ef'
+          : kk === T_ORE ? GEM[Math.min(2, w.ore[i] - 1)].lo : '#2a2430';
+        m.fillRect(x * k, y * k, k, k);
       }
     }
-    ctx.lineTo(x2, y2);
-    ctx.stroke();
-    ctx.restore();
-  }
-  for (const s of fx.shots) {
-    ctx.save();
-    ctx.globalAlpha = 1 - s.t;
-    ctx.strokeStyle = '#fff3c4';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(SX(s.x1), SY(s.y1));
-    ctx.lineTo(SX(s.x2), SY(s.y2));
-    ctx.stroke();
-    ctx.restore();
-  }
-  for (const r of fx.rings) {
-    ctx.save();
-    ctx.globalAlpha = (1 - r.t) * 0.9;
-    ctx.strokeStyle = r.color;
-    ctx.lineWidth = 3 * (1 - r.t) + 1;
-    ctx.beginPath();
-    ctx.arc(SX(r.x), SY(r.y), r.r * ts * (0.3 + 0.7 * r.t), 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-  }
-  for (const p of fx.parts) {
-    ctx.globalAlpha = Math.max(0, p.life / p.max);
-    ctx.fillStyle = p.color;
-    const s = p.size * ts;
-    ctx.fillRect(SX(p.x) - s / 2, SY(p.y) - s / 2, s, s);
-  }
-  ctx.globalAlpha = 1;
-  ctx.font = `700 ${Math.max(11, ts * 0.38)}px ${FONT}`;
-  ctx.textAlign = 'center';
-  for (const f of fx.floats) {
-    ctx.globalAlpha = 1 - f.t * f.t;
-    ctx.fillStyle = f.color;
-    ctx.fillText(f.text, SX(f.x), SY(f.y) - f.t * ts * 0.9);
-  }
-  ctx.globalAlpha = 1;
-
-  drawSignals(ctx, run, SX(d.x), SY(d.y), ts, t);
-
-  ctx.restore();
-
-  if (fx.hurt > 0) {
-    const g = ctx.createRadialGradient(v.w / 2, v.h / 2, Math.min(v.w, v.h) * 0.3, v.w / 2, v.h / 2, Math.max(v.w, v.h) * 0.75);
-    g.addColorStop(0, 'rgba(255, 60, 80, 0)');
-    g.addColorStop(1, `rgba(255, 60, 80, ${fx.hurt * 0.9})`);
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, v.w, v.h);
-  }
-}
-
-function drawBedrock(ctx: CanvasRenderingContext2D, px: number, py: number, ts: number, alpha: number): void {
-  ctx.globalAlpha = alpha;
-  ctx.fillStyle = C.bedrock;
-  ctx.fillRect(px, py, ts, ts);
-  ctx.strokeStyle = C.bedrockLine;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let k = -1; k <= 2; k++) {
-    ctx.moveTo(px + k * ts * 0.4, py + ts);
-    ctx.lineTo(px + k * ts * 0.4 + ts * 0.6, py);
-  }
-  ctx.save();
-  ctx.rect(px, py, ts, ts);
-  ctx.clip();
-  ctx.stroke();
-  ctx.restore();
-  ctx.globalAlpha = 1;
-}
-
-function drawRock(ctx: CanvasRenderingContext2D, px: number, py: number, ts: number, hard: number, hpFrac: number, s: number[]): void {
-  const g = Math.max(1, ts * 0.06);
-  ctx.fillStyle = C.rockLo[hard];
-  ctx.fillRect(px + g * 0.5, py + g * 0.5, ts - g, ts - g);
-  ctx.fillStyle = C.rock[hard];
-  ctx.fillRect(px + g * 0.5, py + g * 0.5, ts - g * 2, ts - g * 2);
-  ctx.fillStyle = C.rockHi[hard];
-  ctx.fillRect(px + g * 0.5, py + g * 0.5, ts - g * 2, g);
-  ctx.fillRect(px + g * 0.5, py + g * 0.5, g, ts - g * 2);
-  // Hardness glyph: soft = one notch, hard = two, dense = three.
-  ctx.fillStyle = C.rockLo[hard];
-  for (let k = 0; k <= hard; k++) ctx.fillRect(px + ts * (0.18 + k * 0.14), py + ts * 0.74, ts * 0.08, ts * 0.08);
-  // Cracks grow with damage.
-  const dmg = 1 - Math.max(0, Math.min(1, hpFrac));
-  if (dmg > 0.02) {
-    ctx.strokeStyle = C.crack;
-    ctx.lineWidth = Math.max(1, ts * 0.05);
-    ctx.beginPath();
-    const n = 1 + Math.floor(dmg * 4);
-    for (let k = 0; k < n; k++) {
-      const a = s[k % 6] * Math.PI * 2;
-      const mx = px + ts / 2, my = py + ts / 2;
-      const len = ts * (0.2 + dmg * 0.3);
-      ctx.moveTo(mx, my);
-      ctx.lineTo(mx + Math.cos(a) * len * 0.5 + s[(k + 1) % 6] * 3, my + Math.sin(a) * len * 0.5);
-      ctx.lineTo(mx + Math.cos(a + 0.4) * len, my + Math.sin(a + 0.4) * len);
+    for (const r of RIFTS) { m.fillStyle = '#ff5a3b'; m.fillRect(r.x * k, r.y * k, k, k); }
+    m.fillStyle = '#9fe0ef';
+    m.fillRect(BASE_POS.x * k, BASE_POS.y * k, 2 * k, 2 * k);
+    m.fillStyle = '#ff5a6e';
+    for (const e of s.enemies) m.fillRect(Math.floor(e.x) * k, Math.floor(e.y) * k, k, k);
+    if (s.drone.dead < 0) {
+      m.fillStyle = '#ffffff';
+      m.fillRect(Math.floor(s.drone.x) * k - 1, Math.floor(s.drone.y) * k - 1, k + 2, k + 2);
     }
-    ctx.stroke();
+    // View rectangle.
+    m.strokeStyle = 'rgba(255,255,255,0.5)';
+    m.strokeRect((v.camX / TP) * k + 0.5, (v.camY / TP) * k + 0.5, (v.bw / TP) * k, (v.bh / TP) * k);
   }
-}
-
-function gem(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, fill: string, hi: string, lo: string): void {
-  ctx.fillStyle = lo;
-  ctx.beginPath();
-  ctx.moveTo(x, y - r);
-  ctx.lineTo(x + r * 0.85, y - r * 0.2);
-  ctx.lineTo(x + r * 0.5, y + r);
-  ctx.lineTo(x - r * 0.5, y + r);
-  ctx.lineTo(x - r * 0.85, y - r * 0.2);
-  ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = fill;
-  ctx.beginPath();
-  ctx.moveTo(x, y - r);
-  ctx.lineTo(x + r * 0.85, y - r * 0.2);
-  ctx.lineTo(x + r * 0.3, y + r * 0.5);
-  ctx.lineTo(x - r * 0.6, y + r * 0.2);
-  ctx.lineTo(x - r * 0.85, y - r * 0.2);
-  ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = hi;
-  ctx.beginPath();
-  ctx.moveTo(x, y - r);
-  ctx.lineTo(x - r * 0.85, y - r * 0.2);
-  ctx.lineTo(x - r * 0.2, y - r * 0.1);
-  ctx.closePath();
-  ctx.fill();
-}
-
-function drawOre(ctx: CanvasRenderingContext2D, px: number, py: number, ts: number, deep: boolean, s: number[]): void {
-  const fill = deep ? C.deep : C.ore, hi = deep ? C.deepHi : C.oreHi;
-  gem(ctx, px + ts * (0.35 + s[2] * 0.1), py + ts * (0.4 + s[3] * 0.1), ts * (deep ? 0.22 : 0.17), fill, hi, C.oreLo);
-  gem(ctx, px + ts * (0.66 + s[4] * 0.08), py + ts * (0.58 + s[5] * 0.1), ts * (deep ? 0.15 : 0.11), fill, hi, C.oreLo);
-}
-
-function drawFloorShade(ctx: CanvasRenderingContext2D, run: RunState, x: number, y: number, px: number, py: number, ts: number): void {
-  // Soft shadow along edges that touch solid tiles.
-  const k = run.world.kind;
-  const solid = (xx: number, yy: number) => xx < 0 || yy < 0 || xx >= MAP_W || yy >= MAP_H || k[idx(xx, yy)] !== T_EMPTY;
-  const e = ts * 0.12;
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
-  if (solid(x, y - 1)) ctx.fillRect(px, py, ts, e);
-  if (solid(x - 1, y)) ctx.fillRect(px, py, e, ts);
-  ctx.fillStyle = 'rgba(255, 240, 220, 0.03)';
-  if (solid(x, y + 1)) ctx.fillRect(px, py + ts - e, ts, e);
-}
-
-function drawRelic(ctx: CanvasRenderingContext2D, px: number, py: number, ts: number, used: boolean, t: number): void {
-  const cx = px + ts / 2, cy = py + ts / 2;
-  const col = used ? C.relicDim : C.relic;
-  if (!used) {
-    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, ts);
-    g.addColorStop(0, `rgba(159, 224, 239, ${0.25 + 0.15 * Math.sin(t * 3)})`);
-    g.addColorStop(1, 'rgba(159, 224, 239, 0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(px - ts / 2, py - ts / 2, ts * 2, ts * 2);
-  }
-  ctx.strokeStyle = col;
-  ctx.lineWidth = Math.max(1.5, ts * 0.06);
-  for (const f of [0.42, 0.29, 0.16]) ctx.strokeRect(cx - ts * f, cy - ts * f, ts * f * 2, ts * f * 2);
-  ctx.fillStyle = col;
-  ctx.fillRect(cx - ts * 0.06, cy - ts * 0.06, ts * 0.12, ts * 0.12);
-}
-
-function drawCore(ctx: CanvasRenderingContext2D, px: number, py: number, ts: number, t: number): void {
-  const cx = px + ts / 2, cy = py + ts / 2;
-  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, ts * 1.6);
-  g.addColorStop(0, `rgba(234, 252, 255, ${0.45 + 0.2 * Math.sin(t * 2.5)})`);
-  g.addColorStop(1, 'rgba(159, 224, 239, 0)');
-  ctx.fillStyle = g;
-  ctx.fillRect(px - ts, py - ts, ts * 3, ts * 3);
-  ctx.strokeStyle = C.relic;
-  ctx.lineWidth = Math.max(1.5, ts * 0.06);
-  ctx.strokeRect(px + ts * 0.06, py + ts * 0.06, ts * 0.88, ts * 0.88);
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(t * 0.8);
-  ctx.fillStyle = C.core;
-  ctx.beginPath();
-  ctx.moveTo(0, -ts * 0.3);
-  ctx.lineTo(ts * 0.22, 0);
-  ctx.lineTo(0, ts * 0.3);
-  ctx.lineTo(-ts * 0.22, 0);
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
-}
-
-function drawNest(ctx: CanvasRenderingContext2D, px: number, py: number, ts: number, n: Nest, t: number): void {
-  const cx = px + ts / 2, cy = py + ts / 2;
-  const awake = n.state === 'awake';
-  const speed = awake ? 5 : 1.4;
-  const p = 0.5 + 0.5 * Math.sin(t * speed);
-  ctx.fillStyle = awake ? 'rgba(166, 95, 214, 0.35)' : 'rgba(166, 95, 214, 0.15)';
-  ctx.beginPath();
-  ctx.arc(cx, cy, ts * 0.46, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = n.warn > 0 && Math.sin(t * 14) > 0 ? C.warn : awake ? '#d79bff' : '#7c4f9c';
-  ctx.lineWidth = Math.max(2, ts * (awake ? 0.1 : 0.06));
-  ctx.beginPath();
-  ctx.arc(cx, cy, ts * (0.22 + p * 0.14), 0, Math.PI * 2);
-  ctx.stroke();
-  if (awake) {
-    ctx.fillStyle = '#e6c8ff';
-    ctx.beginPath();
-    ctx.arc(cx, cy, ts * 0.08, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  if (n.hp < NEST_HP) {
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(px + ts * 0.1, py + ts * 0.86, ts * 0.8, ts * 0.08);
-    ctx.fillStyle = '#d79bff';
-    ctx.fillRect(px + ts * 0.1, py + ts * 0.86, ts * 0.8 * Math.max(0, n.hp / NEST_HP), ts * 0.08);
-  }
-}
-
-function drawScan(ctx: CanvasRenderingContext2D, run: RunState, i: number, px: number, py: number, ts: number, t: number): void {
-  const k = run.world.kind[i];
-  ctx.save();
-  ctx.globalAlpha = 0.55 + 0.15 * Math.sin(t * 2 + i);
-  ctx.lineWidth = 1.5;
-  if (k === T_ORE) {
-    ctx.strokeStyle = run.world.ore[i] > 1 ? C.deep : C.ore;
-    ctx.beginPath();
-    ctx.moveTo(px + ts / 2, py + ts * 0.25);
-    ctx.lineTo(px + ts * 0.75, py + ts / 2);
-    ctx.lineTo(px + ts / 2, py + ts * 0.75);
-    ctx.lineTo(px + ts * 0.25, py + ts / 2);
-    ctx.closePath();
-    ctx.stroke();
-  } else if (k === T_RELIC || k === T_CORE) {
-    ctx.strokeStyle = k === T_CORE ? C.core : C.relic;
-    ctx.strokeRect(px + ts * 0.12, py + ts * 0.12, ts * 0.76, ts * 0.76);
-    ctx.strokeRect(px + ts * 0.3, py + ts * 0.3, ts * 0.4, ts * 0.4);
-  } else if (k === T_NEST) {
-    ctx.strokeStyle = C.nest;
-    ctx.beginPath();
-    ctx.arc(px + ts / 2, py + ts / 2, ts * 0.3, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-function drawWarnMarker(ctx: CanvasRenderingContext2D, x: number, y: number, ts: number, t: number): void {
-  if (Math.sin(t * 14) < -0.2) return;
-  ctx.save();
-  ctx.strokeStyle = C.warn;
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.arc(x, y, ts * 0.38, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.fillStyle = C.warn;
-  ctx.font = `800 ${Math.max(12, ts * 0.5)}px ${FONT}`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('!', x, y + 1);
-  ctx.restore();
-}
-
-function drawEnemy(ctx: CanvasRenderingContext2D, x: number, y: number, ts: number, kind: 'crawler' | 'armored', dx: number, dy: number, hpFrac: number, hit: boolean, stunned: boolean): void {
-  const a = Math.atan2(dy, dx);
-  const r = ts * (kind === 'armored' ? 0.34 : 0.28);
-  ctx.save();
-  ctx.translate(x, y);
-  if (kind === 'armored') {
-    ctx.strokeStyle = C.enemyHi;
-    ctx.lineWidth = Math.max(2, ts * 0.08);
-    ctx.beginPath();
-    ctx.arc(0, 0, r * 1.15, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-  ctx.rotate(a);
-  ctx.fillStyle = hit ? '#ffffff' : C.enemy;
-  ctx.strokeStyle = '#2a1636';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(r, 0);
-  ctx.lineTo(-r * 0.8, r * 0.75);
-  ctx.lineTo(-r * 0.45, 0);
-  ctx.lineTo(-r * 0.8, -r * 0.75);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-  ctx.restore();
-  if (stunned) {
-    ctx.fillStyle = 'rgba(189, 243, 255, 0.8)';
-    ctx.fillRect(x - ts * 0.2, y - r - ts * 0.18, ts * 0.4, ts * 0.05);
-  }
-  if (hpFrac < 1) {
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(x - ts * 0.3, y + r + 2, ts * 0.6, 3);
-    ctx.fillStyle = C.enemyHi;
-    ctx.fillRect(x - ts * 0.3, y + r + 2, ts * 0.6 * Math.max(0, hpFrac), 3);
-  }
-}
-
-function drawProbe(ctx: CanvasRenderingContext2D, run: RunState, x: number, y: number, ts: number, t: number): void {
-  const d = run.drone;
-  const r = ts * 0.3;
-  // Evacuation beam.
-  if (d.evac >= 0) {
-    const p = Math.min(1, d.evac / EVAC_TIME);
-    const g = ctx.createLinearGradient(x, y - ts * 6, x, y);
-    g.addColorStop(0, 'rgba(159, 224, 239, 0)');
-    g.addColorStop(1, `rgba(159, 224, 239, ${0.25 + p * 0.5})`);
-    ctx.fillStyle = g;
-    ctx.fillRect(x - ts * 0.35, y - ts * 6, ts * 0.7, ts * 6);
-    ctx.strokeStyle = C.relic;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(x, y, r * 1.7, -Math.PI / 2, -Math.PI / 2 + p * Math.PI * 2);
-    ctx.stroke();
-  }
-  if (run.bio > 0) {
-    ctx.fillStyle = `rgba(147, 212, 157, ${0.2 + 0.1 * Math.sin(t * 10)})`;
-    ctx.beginPath();
-    ctx.arc(x, y, r * 1.6, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  if (fx.flash > 0) {
-    ctx.fillStyle = `rgba(159, 224, 239, ${fx.flash * 0.6})`;
-    ctx.beginPath();
-    ctx.arc(x, y, r * (1.4 + (0.6 - fx.flash) * 2), 0, Math.PI * 2);
-    ctx.fill();
-  }
-  // Drill line in the facing direction (jitters while digging).
-  const [fx_, fy] = DIRS[d.face];
-  const digging = d.dig >= 0 && d.path.length === 0;
-  const j = digging ? Math.sin(t * 60) * ts * 0.03 : 0;
-  ctx.strokeStyle = digging ? '#ffe08a' : '#cfc6bb';
-  ctx.lineWidth = Math.max(3, ts * 0.12);
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  ctx.lineTo(x + fx_ * (r + ts * 0.2) + j, y + fy * (r + ts * 0.2) + j);
-  ctx.stroke();
-  ctx.lineCap = 'butt';
-  // Body.
-  ctx.fillStyle = d.hurt > 0 ? '#ffd0d6' : C.probe;
-  ctx.strokeStyle = '#2b2228';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-  ctx.fillStyle = '#2b2228';
-  ctx.beginPath();
-  ctx.arc(x + fx_ * r * 0.35, y + fy * r * 0.35, r * 0.28, 0, Math.PI * 2);
-  ctx.fill();
-  // Shield ring.
-  const frac = d.shield / d.maxShield;
-  ctx.strokeStyle = frac > 0.35 ? C.shield : C.warn;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(x, y, r + 4, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
-  ctx.stroke();
-  // Core carried.
-  if (run.core.taken) {
-    ctx.fillStyle = C.core;
-    ctx.beginPath();
-    ctx.moveTo(x, y - r - ts * 0.38);
-    ctx.lineTo(x + ts * 0.1, y - r - ts * 0.24);
-    ctx.lineTo(x, y - r - ts * 0.1);
-    ctx.lineTo(x - ts * 0.1, y - r - ts * 0.24);
-    ctx.closePath();
-    ctx.fill();
-  }
-  // Pulse / capacitor / repulsor ranges hinted faintly.
-  if (has(run, 'repulsor') && run.repCd <= 0.4) {
-    ctx.strokeStyle = 'rgba(143, 182, 255, 0.25)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(x, y, REPULSOR.radius * ts, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-  if (has(run, 'capacitor')) {
-    const c = run.cap.count / CAPACITOR.tiles;
-    ctx.strokeStyle = 'rgba(255, 224, 138, 0.8)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(x, y, r + 8, Math.PI / 2, Math.PI / 2 + c * Math.PI * 2);
-    ctx.stroke();
-  }
-  if (d.pulseCd <= 0 && run.enemies.some((e) => Math.hypot(e.x - d.x, e.y - d.y) <= PULSE.radius)) {
-    ctx.strokeStyle = `rgba(189, 243, 255, ${0.25 + 0.2 * Math.sin(t * 8)})`;
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.arc(x, y, PULSE.radius * ts, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-  }
-}
-
-/** Fuzzy direction hints toward relics and the core not yet seen. */
-function drawSignals(ctx: CanvasRenderingContext2D, run: RunState, x: number, y: number, ts: number, t: number): void {
-  const d = run.drone;
-  const targets: { x: number; y: number; core: boolean; i: number }[] = [];
-  run.sites.forEach((s, i) => {
-    if (!s.activated && !run.world.seen[idx(s.x, s.y)]) targets.push({ x: s.x + 0.5, y: s.y + 0.5, core: false, i });
-  });
-  if (!run.core.taken && !run.world.seen[idx(run.core.x, run.core.y)]) targets.push({ x: run.core.x + 0.5, y: run.core.y + 0.5, core: true, i: 9 });
-  for (const g of targets) {
-    const dist = Math.hypot(g.x - d.x, g.y - d.y);
-    if (dist > SIGNAL_RANGE && !g.core) continue;
-    const fuzz = (seeds[g.i * 31][0] - 0.5) * 0.5 + Math.sin(t * 1.3 + g.i) * 0.08;
-    const a = Math.atan2(g.y - d.y, g.x - d.x) + fuzz;
-    const rr = ts * (1.05 + 0.08 * Math.sin(t * 4 + g.i));
-    const ax = x + Math.cos(a) * rr, ay = y + Math.sin(a) * rr;
-    const near = 1 - Math.min(1, dist / SIGNAL_RANGE);
-    ctx.save();
-    ctx.globalAlpha = g.core ? 0.55 + near * 0.4 : 0.35 + near * 0.55;
-    ctx.translate(ax, ay);
-    ctx.rotate(a);
-    ctx.fillStyle = g.core ? C.core : C.relic;
-    const s = ts * (g.core ? 0.2 : 0.16);
-    ctx.beginPath();
-    ctx.moveTo(s, 0);
-    ctx.lineTo(-s * 0.6, s * 0.7);
-    ctx.lineTo(-s * 0.2, 0);
-    ctx.lineTo(-s * 0.6, -s * 0.7);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-  }
+  const mx = v.w - mini.width - 10, my = 10;
+  main.globalAlpha = 0.9;
+  main.drawImage(mini, mx, my);
+  main.globalAlpha = 1;
+  main.strokeStyle = 'rgba(239,230,218,0.25)';
+  main.strokeRect(mx - 0.5, my - 0.5, mini.width + 1, mini.height + 1);
 }

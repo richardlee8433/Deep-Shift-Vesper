@@ -3,8 +3,9 @@
 Set on Vesper (Helion designation: F8 Extraction Sector). Canvas + TypeScript, no runtime dependencies.
 Two modes live side by side:
 
-- **遺跡挖掘 (`dig.html`) — v0.1 prototype of the new core loop.** Top-down grid digging: dig toward
-  ancient relics that change how you dig or fight, but activating them wakes the nests around you.
+- **地底防線 (`dig.html`) — prototype of the new core loop.** Dig for ore on one persistent map, build
+  walls / turrets / traps, and hold the base core against monsters that come up from the rifts at the
+  bottom of the map. Pixel art drawn in code, Core Keeper-style 3/4 view.
 - **放置經營 (`index.html`) — the original idle mining prototype**, kept unchanged with its own save.
 
 ## Run
@@ -16,43 +17,38 @@ npm test          # headless checks for the dig simulation
 npm run build     # typecheck + build; also writes dist/vesper-dig.html and dist/vesper.html (single self-contained files)
 ```
 
-## Dig mode (v0.1)
+## 地底防線 (dig mode)
 
-Built from the core gameplay plan (遺跡挖掘試玩版核心規劃 v0.1). All numbers are starting values in
-`src/dig/config.ts`; nothing is balanced yet.
+All numbers are starting values in `src/dig/config.ts`; nothing is balanced yet.
 
-- **Controls:** `W` `A` `S` `D` (or arrow keys) dig in that direction and step into the tile once it is
-  open — hold to keep tunnelling; tapping toward a relic opens its panel. Mouse: click an open tile to move; hold a reachable rock to dig (drag to the next adjacent rock;
-  a quick tap digs that one tile); hover for hardness / ore / danger / activation cost; click a relic to
-  walk up and open its panel (simulation pauses); `Space` knock-back pulse (12 s); `R` 5 s evacuation
-  (cancellable, damage does not interrupt, hitting 0 shield fails first); `Esc` pause.
-- **Map:** one fixed 24 × 36 map (`src/dig/map.ts`, ASCII template), solid rock everywhere except the
-  entrance (no bedrock, no open caves). One hardness per zone: shallow is softest (~0.5 s a tile) and each
-  deeper zone is 30% harder than the one above (`LAYER_STEP`). 4 relic sites, 2 nests, 1 core.
-- **Relics (3 slots, no duplicates):** 共鳴鑽頭, 礦脈引爆器, 回聲透鏡, 碎岩電容, 排斥場, 生質轉換器.
-  The first shallow site is always the resonance drill until its blueprint is saved (it is backed up
-  immediately); other sites draw relics you have not unlocked first.
-- **Threat 0–100:** only relic activations (+15 tutorial / +20), detonator chains (+3), taking the core
-  (+25) and destroying an awakened nest (−15) change it. It sets the spawn interval (25 / 18 / 12 s,
-  armoured every third spawn at ≥ 70). Awakened nests only spawn once connected to your tunnels, after a
-  3 s path warning; max 6 enemies.
-- **Between runs:** ore buys drill (3 levels) and shield (2 levels) upgrades; saved blueprints can be taken
-  as the starting relic. Failure keeps half the ore (rounded down) and loses this run's new blueprints.
-- **Playtest log:** base screen → 試玩紀錄 shows time to first relic, dig / move / idle split, loadout,
-  replacements, ore and depth per run, and copies the raw JSON.
-- Save key `deep-shift-vesper/dig-v1` (meta + in-progress run in one entry; settlement is idempotent by run id).
+- **One persistent world** (30 × 48, `src/dig/map.ts`): base chamber at the top, solid rock everywhere
+  else in three zones (each 30% harder than the one above), seeded ore veins, six relic sites, three
+  rifts in the bottom row. Saved under `deep-shift-vesper/dig-v2`.
+- **Controls:** `WASD` / arrows dig and walk; mouse click to move, hold rock to dig; `1` `2` `3` pick
+  wall / turret / spike trap and click (or drag) or press `E` to place; right-click / `X` demolishes for
+  half the cost back; `B` opens the base panel near the core (upgrades, repair, relic loadout);
+  `Space` knock-back pulse; `R` recall to base; `Esc` pause.
+- **Monsters** walk a cost field toward the base core: open tunnels are cheap, rock is slow to chew,
+  walls and turrets cost more (`PATH_COST`). Every tile you dig is a cheaper road for them. Blocked,
+  they chew rock or smash structures; near the miner they turn to fight.
+- **Waves** start after 3 minutes and come every 2 minutes, with a 6 s quake warning that shows their
+  routes. Size grows with the wave number and with 地心騷動 (threat): relic activations, detonator chains
+  and the deepest row you have reached.
+- **Losing is a setback, not an end:** if the core falls, monsters clear, 30% of ore is lost and the core
+  is restored to half. A destroyed miner is rebuilt at the base after 5 s.
+- **Relics** (six, one per site) go into a collection; up to three equipped, swapped at the base.
+  The echo lens also keeps the monsters' routes on screen.
 
 | File | What it holds |
 |---|---|
 | `src/dig/config.ts` | Every tuning number |
-| `src/dig/map.ts` | Map template, tile kinds, world builder |
-| `src/dig/relics.ts` | Relic names, effect text, icons |
-| `src/dig/state.ts` | RunState / MetaState, relic draw, settlement, save |
-| `src/dig/sim.ts` | Fixed-step simulation, commands, events and relic effects, BFS flow field |
-| `src/dig/game.ts` | Pause reasons, fixed-step ticking, finishing a run |
-| `src/dig/render.ts` | Canvas drawing (shapes only) and effects |
-| `src/dig/ui.ts`, `main.ts` | HUD, panels, base / result screens; input and loop |
-| `tests/dig.test.ts` | Route to the core exists, enemies stay out of rock, relic swap cancels effects, chains terminate, pause freezes cooldowns, settlement pays once, failure keeps old blueprints |
+| `src/dig/map.ts` | World layout, tile kinds, ore veins |
+| `src/dig/state.ts` | Game state, derived values, save |
+| `src/dig/sim.ts` | Fixed-step simulation: miner, digging, building, monster cost field, waves, relic effects |
+| `src/dig/pixel.ts` | Code-drawn pixel textures and sprites |
+| `src/dig/render.ts` | 3/4 pixel renderer, lighting, effects, minimap |
+| `src/dig/ui.ts`, `main.ts` | HUD, build bar, base / relic panels; input and loop |
+| `tests/dig.test.ts` | Headless rule checks (routes, chewing, walls, turrets, waves, core fall, respawn, relics, save) |
 
 ## Idle mode
 

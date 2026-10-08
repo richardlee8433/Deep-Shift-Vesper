@@ -1,18 +1,16 @@
-// Ties meta + run together: fixed-step ticking, pause reasons, settlement.
+// Fixed-step ticking with named pause reasons (menu, panel, hidden tab…).
 
 import { STEP } from './config';
-import { step, type StepResult } from './sim';
-import { newRun, settle, type MetaState, type RunState, type RunSummary } from './state';
+import { step } from './sim';
+import type { GameState } from './state';
 
 export class Game {
-  meta: MetaState;
-  run: RunState | null = null;
+  state: GameState;
   private acc = 0;
   private pauses = new Set<string>();
 
-  constructor(meta: MetaState, run: RunState | null = null) {
-    this.meta = meta;
-    this.run = run;
+  constructor(state: GameState) {
+    this.state = state;
   }
 
   get paused(): boolean {
@@ -31,33 +29,17 @@ export class Game {
     return this.pauses.has(reason);
   }
 
-  startRun(seed?: number): RunState {
-    this.run = newRun(this.meta, seed);
-    this.acc = 0;
-    return this.run;
-  }
-
-  /** Advance by real time `dt`. Returns the end of the run if it ended this tick. */
-  tick(dt: number): StepResult | null {
-    if (!this.run || this.paused) return null;
+  /** Advance by real time `dt`; stops early when a panel prompt appears. */
+  tick(dt: number): void {
+    if (this.paused) return;
     this.acc = Math.min(this.acc + dt, 0.25);
     while (this.acc >= STEP) {
       this.acc -= STEP;
-      const res = step(this.run, STEP);
-      if (res) return res;
-      if (this.run.prompt) {
+      step(this.state, STEP);
+      if (this.state.prompt) {
         this.acc = 0;
         break;
       }
     }
-    return null;
-  }
-
-  /** Pay out and clear the run. Idempotent through the run id. */
-  finish(res: StepResult): RunSummary | null {
-    if (!this.run) return null;
-    const sum = settle(this.meta, this.run, res.result, res.cause);
-    this.run = null;
-    return sum;
   }
 }

@@ -62,7 +62,7 @@ kbd {
 #app {
   height: 100%;
   height: 100dvh;
-  max-width: 1000px;
+  max-width: 1200px;
   margin: 0 auto;
   padding-inline: 16px;
   box-sizing: border-box;
@@ -100,6 +100,44 @@ kbd {
 .stat-ore { display: flex; align-items: center; gap: 6px; }
 .stat-ore .num { font-size: 20px; font-weight: 700; color: var(--lamp); }
 .stat-ore .dim { font-size: 12px; }
+.meter-base .bar i { background: #6fc2d6; }
+.wave {
+  font-weight: 700;
+  font-size: 15px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+.wave.alert { color: #ffc2cb; border-color: rgba(255, 127, 147, 0.6); animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { border-color: transparent; } }
+.threat { font-size: 13px; color: var(--dim); }
+.threat b { color: var(--threat); font-size: 16px; }
+.depth { font-size: 12px; }
+#scene { image-rendering: pixelated; }
+
+.builds { display: flex; gap: 6px; }
+.bld {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  font-weight: 700;
+}
+.bld small { display: inline-flex; align-items: center; gap: 2px; color: var(--lamp); font-family: var(--font-display); }
+.bld small .ico { width: 14px; height: 14px; }
+.bld.on { border-color: var(--lamp); box-shadow: inset 0 0 0 1px var(--lamp); background: rgba(244, 181, 63, 0.12); }
+.bld.poor small { color: var(--neg); }
+#btn-base.near { border-color: var(--helion); color: var(--helion); }
+.core-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+.core-row button { min-height: 38px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); font-weight: 700; display: inline-flex; align-items: center; gap: 4px; }
+.bar.wide { width: 220px; }
+.intel p { font-size: 13px; margin: 0 0 6px; }
+
 .core-badge {
   font-family: var(--font-display);
   font-weight: 700;
@@ -227,8 +265,8 @@ kbd {
   background: rgba(159, 224, 239, 0.16);
 }
 .act.cooling { color: var(--dim); }
-.act-evac > .act-fill { background: rgba(159, 224, 239, 0.35); transform: scaleX(0); }
-.act-evac.on { border-color: var(--helion); color: var(--helion); }
+.act-recall > .act-fill { background: rgba(159, 224, 239, 0.35); transform: scaleX(0); }
+.act-recall.on { border-color: var(--helion); color: var(--helion); }
 .act-menu { padding: 0 10px; }
 
 /* ---- Modal ---- */
@@ -386,8 +424,13 @@ summary { cursor: pointer; color: var(--dim); }
 .log th, .log td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .log th { color: var(--dim); }
 
+@media (max-width: 760px) {
+  .bld span, .depth { display: none; }
+  .bar.wide { width: 120px; }
+}
+
 @media (max-width: 640px) {
-  .bar { width: 72px; }
+  .bar { width: 64px; }
   .threat-next { display: none; }
   .slot { min-width: 0; padding: 0 8px; }
   .slot span { display: none; }
