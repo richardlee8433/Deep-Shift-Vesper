@@ -220,6 +220,39 @@ export function retarget(run: RunState, tile: number): void {
   if (dirBetween(droneTile(run), tile) < 0 || d.path.length) d.path = pathTo(run, stand) ?? [];
 }
 
+/**
+ * Keyboard steering (WASD / arrows), called every frame while a direction is held:
+ * dig the tile in that direction, or step into it once it is open. `tap` is true on
+ * the key press itself; facing a relic or the core then opens its panel.
+ */
+export function steer(run: RunState, dir: number, tap: boolean): CommandResult {
+  const d = run.drone;
+  if (d.evac >= 0) return tap ? fail('撤離中（按 R 取消）') : { ok: false };
+  // A mouse route in progress: finish the current step, then follow the keys.
+  if (d.path.length > 1) d.path.length = 1;
+  if (d.path.length) return { ok: true };
+  d.face = dir;
+  const x = tileX(droneTile(run)) + DIRS[dir][0], y = tileY(droneTile(run)) + DIRS[dir][1];
+  if (!inBounds(x, y)) return tap ? fail('已到地圖邊界') : { ok: false };
+  const t = idx(x, y);
+  const k = run.world.kind[t];
+  if (k === T_EMPTY) {
+    d.dig = -1;
+    d.approach = -1;
+    d.path = [t];
+    return { ok: true };
+  }
+  if (isDiggable(k)) {
+    if (d.dig !== t) d.dig = t;
+    d.approach = -1;
+    d.hold = true;
+    d.commit = false;
+    return { ok: true };
+  }
+  if (tap && (k === T_RELIC || k === T_CORE)) return press(run, t);
+  return { ok: false };
+}
+
 /** Pointer released. A short tap keeps digging the tapped tile until it breaks. */
 export function release(run: RunState, short: boolean): void {
   const d = run.drone;

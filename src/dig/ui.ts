@@ -97,7 +97,7 @@ export function tileInfo(run: RunState, tile: number): string | null {
     const h = w.hard[tile];
     const ore = k === T_ORE ? `<span class="good">${w.ore[tile] > 1 ? '深層礦 +3' : '礦石 +1'}</span>` : '';
     const hp = w.hp[tile] < ROCK_HP[h] ? `<span>剩餘 ${Math.round((w.hp[tile] / ROCK_HP[h]) * 100)}%</span>` : '';
-    return `<b>${ROCK_NAME[h]}</b><span>基礎約 ${(ROCK_HP[h] / DIG_DPS).toFixed(1)} 秒</span>${ore}${hp}${reach(canDig(run, tile))}`;
+    return `<b>${ROCK_NAME[h]}</b><span>基礎約 ${+(ROCK_HP[h] / DIG_DPS).toFixed(2)} 秒</span>${ore}${hp}${reach(canDig(run, tile))}`;
   }
   if (k === T_RELIC) {
     const site = run.sites.findIndex((s) => s.x === tileX(tile) && s.y === tileY(tile));
@@ -177,6 +177,7 @@ export const escapeModal = (): boolean => {
 
 export const HELP = `
   <table class="help">
+    <tr><th><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></th><td>朝該方向挖掘；前方已挖通就移動過去。按住可一路往前挖（方向鍵也可以）。面向遺跡時按一下會開啟面板</td></tr>
     <tr><th>點擊通道</th><td>探機沿已挖通的路自動移動</td></tr>
     <tr><th>按住岩格</th><td>移到相鄰空格並持續挖掘；按住拖到下一個相鄰岩格可連續開路。輕點一下 = 挖穿這一格</td></tr>
     <tr><th>點遠處岩格</th><td>不可達：不會自動挖穿未知地圖</td></tr>
@@ -190,7 +191,7 @@ export const HELP = `
     <li>只能上下左右移動與挖掘；探機自動射擊 3 格內最近的敵人。</li>
     <li>挖掘與時間<b>不會</b>增加威脅。威脅來自啟動遺跡、礦脈連鎖與取出主核心。</li>
     <li>甦醒的巢穴要和你的通道<b>連通</b>才會生成敵人；敵人只沿挖通的格子前進。</li>
-    <li>遠處遺跡只顯示模糊方向（探機旁的青色箭頭）；岩盤層的缺口一開始就看得到。</li>
+    <li>遠處遺跡只顯示模糊方向（探機旁的青色箭頭）。整張圖都是岩石，越深越硬：中層 +30%、深層再 +30%。</li>
     <li>撤離成功：帶回全部礦石與藍圖。失敗：礦石減半、本趟新藍圖遺失（已解鎖的不受影響）。</li>
   </ul>`;
 

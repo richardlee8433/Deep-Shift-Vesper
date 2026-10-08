@@ -3,7 +3,7 @@
 // with a drill line, relic = cyan concentric squares, crawler = triangle, armoured
 // = triangle with a shell ring, nest = pulsing ring.
 
-import { CAPACITOR, ENEMY, EVAC_TIME, MAP_H, MAP_W, NEST_HP, PULSE, REPULSOR, ROCK_HP, SIGNAL_RANGE, VISION } from './config';
+import { CAPACITOR, DEEP_ROW, ENEMY, EVAC_TIME, MAP_H, MAP_W, MID_ROW, NEST_HP, PULSE, REPULSOR, ROCK_HP, SIGNAL_RANGE, VISION } from './config';
 import { DIRS, idx, rng, T_BEDROCK, T_CORE, T_EMPTY, T_NEST, T_ORE, T_RELIC, T_ROCK, zoneOf, ZONE_NAME } from './map';
 import { canDig, has, pathFromTo, type Signal, tileX, tileY } from './sim';
 import type { Nest, RunState } from './state';
@@ -278,15 +278,27 @@ export function draw(ctx: CanvasRenderingContext2D, run: RunState, v: View, o: D
     }
   }
 
-  // Zone labels beside each shelf.
+  // Zone boundaries: a dashed line, the zone name and how much harder its rock is.
   ctx.font = `600 ${Math.max(10, ts * 0.34)}px ${FONT}`;
   ctx.textBaseline = 'middle';
-  for (const [row, label] of [[0.5, ZONE_NAME[0]], [12.5, ZONE_NAME[1]], [24.5, ZONE_NAME[2]]] as const) {
+  ctx.textAlign = 'left';
+  const lx = Math.max(v.ox, 0) + 4;
+  ctx.fillStyle = 'rgba(251, 243, 230, 0.55)';
+  ctx.fillText('入口', lx, SY(0.5));
+  for (const [row, zone] of [[MID_ROW, 1], [DEEP_ROW, 2]] as const) {
     const py = SY(row);
     if (py < -ts || py > v.h + ts) continue;
-    ctx.fillStyle = 'rgba(251, 243, 230, 0.55)';
-    ctx.textAlign = 'left';
-    ctx.fillText(row === 0.5 ? '入口' : `▼ ${label}`, Math.max(v.ox, 0) + 4, py + (row === 0.5 ? 0 : ts));
+    ctx.save();
+    ctx.strokeStyle = 'rgba(251, 243, 230, 0.28)';
+    ctx.setLineDash([6, 6]);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(v.ox, py);
+    ctx.lineTo(v.ox + MAP_W * ts, py);
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = 'rgba(251, 243, 230, 0.7)';
+    ctx.fillText(`▼ ${ZONE_NAME[zone]}・岩石比上一層硬 ${Math.round((ROCK_HP[zone] / ROCK_HP[zone - 1] - 1) * 100)}%`, lx, py + ts * 0.3);
   }
 
   // Lens: nest ranges as dashed outlines.

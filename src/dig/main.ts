@@ -5,7 +5,7 @@ import { play, setSound, unlockAudio } from './audio';
 import { RELICS, type RelicId } from './relics';
 import { clearFx, draw, layout, newView, onSignal, screenToTile } from './render';
 import * as sim from './sim';
-import { abandon, activateSite, press, previewSite, release, retarget, setSink, type StepResult, takeCore, toggleEvac, usePulse } from './sim';
+import { abandon, activateSite, press, previewSite, release, retarget, setSink, steer, type StepResult, takeCore, toggleEvac, usePulse } from './sim';
 import { clearSave, newMeta, readSave, writeSave, type MetaState, type Nest } from './state';
 import {
   baseHtml, clearToasts, closeModal, corePanelHtml, escapeModal, HELP, initModal, logHtml, modalOpen, openModal,
@@ -77,12 +77,12 @@ function startRun(): void {
   if (!meta.seenHelp) {
     meta.seenHelp = true;
     game.pause('help');
-    openModal(`<p class="eyebrow">第一次下潛</p><h2>按住岩格挖掘</h2>${HELP}<div class="panel-btns"><button type="button" class="primary" data-act="ok" data-focus>開始挖掘</button></div>`, () => {
+    openModal(`<p class="eyebrow">第一次下潛</p><h2>用 WASD 或滑鼠挖掘</h2>${HELP}<div class="panel-btns"><button type="button" class="primary" data-act="ok" data-focus>開始挖掘</button></div>`, () => {
       closeModal();
       game.resume('help');
     }, () => { closeModal(); game.resume('help'); });
   }
-  toast('按住岩格挖掘。青色箭頭指向遠古裝置的訊號。', 'info');
+  toast('用 WASD 或按住岩格挖掘。青色箭頭指向遠古裝置的訊號。', 'info');
 }
 
 function endRun(res: StepResult): void {
@@ -238,6 +238,13 @@ function setupInput(): void {
       if (!modalOpen()) showPause();
       return;
     }
+    const dir = KEY_DIR[e.code];
+    if (dir !== undefined) {
+      e.preventDefault();
+      if (modalOpen() || e.repeat) return;
+      keyDown(dir);
+      return;
+    }
     if (modalOpen() || e.repeat) return;
     if (e.code === 'Space') {
       e.preventDefault();
@@ -247,6 +254,44 @@ function setupInput(): void {
       doEvac();
     }
   });
+  document.addEventListener('keyup', (e) => {
+    const dir = KEY_DIR[e.code];
+    if (dir === undefined) return;
+    const i = heldDirs.indexOf(dir);
+    if (i >= 0) heldDirs.splice(i, 1);
+    if (!heldDirs.length) stopSteering();
+  });
+  window.addEventListener('blur', () => {
+    heldDirs.length = 0;
+    stopSteering();
+  });
+}
+
+// ---- Keyboard steering --------------------------------------------------------
+
+const KEY_DIR: Record<string, number> = {
+  KeyW: 0, ArrowUp: 0, KeyD: 1, ArrowRight: 1, KeyS: 2, ArrowDown: 2, KeyA: 3, ArrowLeft: 3,
+};
+const heldDirs: number[] = []; // most recent last
+let keySteering = false;
+
+function keyDown(dir: number): void {
+  unlockAudio();
+  const i = heldDirs.indexOf(dir);
+  if (i >= 0) heldDirs.splice(i, 1);
+  heldDirs.push(dir);
+  const run = game.run;
+  if (!run || game.paused) return;
+  view.look = 0;
+  keySteering = true;
+  const res = steer(run, dir, true);
+  if (!res.ok && res.msg) toast(res.msg, 'warn');
+}
+
+function stopSteering(): void {
+  if (!keySteering) return;
+  keySteering = false;
+  if (game.run && !pointer.down) release(game.run, false);
 }
 
 function doPulse(): void {
@@ -287,6 +332,10 @@ function frame(now: number): void {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   if (run) {
     if (pointer.down && hover >= 0 && !game.paused) retarget(run, hover);
+    if (heldDirs.length && !game.paused) {
+      keySteering = true;
+      steer(run, heldDirs[heldDirs.length - 1], false);
+    }
     const res = game.tick(dt);
     if (res) {
       endRun(res);

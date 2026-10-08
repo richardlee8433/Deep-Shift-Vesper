@@ -1,9 +1,9 @@
 // Headless checks for the dig prototype (plan §12). Run with `npm test`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MAP_H, MAP_W, STEP } from '../src/dig/config';
-import { buildWorld, DIRS, idx, inBounds, T_BEDROCK, T_EMPTY, T_ORE, T_ROCK } from '../src/dig/map';
-import { activateSite, distMap, droneTile, press, release, step, takeCore, tileX, tileY, toggleEvac, usePulse } from '../src/dig/sim';
+import { MAP_H, MAP_W, ROCK_HP, STEP } from '../src/dig/config';
+import { buildWorld, DIRS, idx, inBounds, T_BEDROCK, T_EMPTY, T_ORE, T_ROCK, zoneOf } from '../src/dig/map';
+import { activateSite, distMap, droneTile, press, release, steer, step, takeCore, tileX, tileY, toggleEvac, usePulse } from '../src/dig/sim';
 import { newMeta, newRun, settle, type RunState } from '../src/dig/state';
 import { Game } from '../src/dig/game';
 
@@ -67,6 +67,41 @@ test('map: a route to the core exists with base equipment only', () => {
   assert.ok(route.every((t) => w.kind[t] !== T_BEDROCK));
   assert.equal(w.sites.length, 4);
   assert.equal(w.nests.length, 2);
+});
+
+test('map: no bedrock or open caves; one rock hardness per zone, 30% harder each zone', () => {
+  const w = buildWorld();
+  for (let i = 0; i < w.kind.length; i++) {
+    const y = Math.floor(i / MAP_W);
+    assert.notEqual(w.kind[i], T_BEDROCK);
+    if (w.kind[i] === T_EMPTY) assert.ok(y <= 1, 'only the entrance is open');
+    if (w.kind[i] === T_ROCK || w.kind[i] === T_ORE) {
+      assert.equal(w.hard[i], zoneOf(y));
+      assert.equal(w.hp[i], ROCK_HP[zoneOf(y)]);
+    }
+  }
+  assert.equal(ROCK_HP[0], 1);
+  assert.ok(Math.abs(ROCK_HP[1] / ROCK_HP[0] - 1.3) < 1e-9);
+  assert.ok(Math.abs(ROCK_HP[2] / ROCK_HP[1] - 1.3) < 1e-9);
+});
+
+test('holding a direction key tunnels straight that way', () => {
+  const r = run_();
+  const start = droneTile(r);
+  for (let i = 0; i < 60 * 4; i++) {
+    steer(r, 2, i === 0); // S
+    step(r, STEP);
+  }
+  release(r, false);
+  for (let i = 0; i < 60 && r.drone.path.length; i++) step(r, STEP); // finish the last step
+  const x = tileX(start);
+  for (let y = tileY(start) + 1; y <= tileY(start) + 4; y++) assert.equal(r.world.kind[idx(x, y)], T_EMPTY, `dug ${x},${y}`);
+  assert.ok(tileY(droneTile(r)) >= tileY(start) + 4, 'probe followed the tunnel');
+  assert.equal(r.drone.face, 2);
+  // Turning: D digs to the right of where the probe now stands.
+  const here = droneTile(r);
+  for (let i = 0; i < 60; i++) { steer(r, 1, i === 0); step(r, STEP); }
+  assert.equal(r.world.kind[here + 1], T_EMPTY);
 });
 
 test('base loadout can dig to the core, take it and evacuate', () => {

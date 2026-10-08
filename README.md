@@ -21,12 +21,14 @@ npm run build     # typecheck + build; also writes dist/vesper-dig.html and dist
 Built from the core gameplay plan (遺跡挖掘試玩版核心規劃 v0.1). All numbers are starting values in
 `src/dig/config.ts`; nothing is balanced yet.
 
-- **Controls:** click an open tile to move; hold a reachable rock to dig (drag to the next adjacent rock;
+- **Controls:** `W` `A` `S` `D` (or arrow keys) dig in that direction and step into the tile once it is
+  open — hold to keep tunnelling; tapping toward a relic opens its panel. Mouse: click an open tile to move; hold a reachable rock to dig (drag to the next adjacent rock;
   a quick tap digs that one tile); hover for hardness / ore / danger / activation cost; click a relic to
   walk up and open its panel (simulation pauses); `Space` knock-back pulse (12 s); `R` 5 s evacuation
   (cancellable, damage does not interrupt, hitting 0 shield fails first); `Esc` pause.
-- **Map:** one fixed 24 × 36 map (`src/dig/map.ts`, ASCII template + seeded hardness variation) with
-  shallow / mid / deep zones split by surveyed bedrock shelves. 4 relic sites, 2 nests, 1 core.
+- **Map:** one fixed 24 × 36 map (`src/dig/map.ts`, ASCII template), solid rock everywhere except the
+  entrance (no bedrock, no open caves). One hardness per zone: shallow is softest (~0.5 s a tile) and each
+  deeper zone is 30% harder than the one above (`LAYER_STEP`). 4 relic sites, 2 nests, 1 core.
 - **Relics (3 slots, no duplicates):** 共鳴鑽頭, 礦脈引爆器, 回聲透鏡, 碎岩電容, 排斥場, 生質轉換器.
   The first shallow site is always the resonance drill until its blueprint is saved (it is backed up
   immediately); other sites draw relics you have not unlocked first.

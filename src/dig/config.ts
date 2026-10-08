@@ -6,14 +6,15 @@ export const MAP_H = 36;
 /** First row of each depth zone (shallow starts at 0). */
 export const MID_ROW = 13;
 export const DEEP_ROW = 25;
-export const MAP_SEED = 7; // fixed so loadouts can be compared on the same map
 
 export const STEP = 1 / 60; // fixed simulation step, seconds
 
-// Digging: HP per second. Soft / hard / dense rock HP gives ~0.5 / 1.5 / 3 s.
+// Digging: HP per second. Every tile in a zone has the same rock; the shallow zone is
+// the softest (~0.5 s) and each deeper zone is LAYER_STEP harder than the one above.
 export const DIG_DPS = 2;
-export const ROCK_HP = [1, 3, 6];
-export const ROCK_NAME = ['軟岩', '硬岩', '緻密岩'];
+export const LAYER_STEP = 0.3;
+export const ROCK_HP = [0, 1, 2].map((zone) => (1 + LAYER_STEP) ** zone); // 1, 1.3, 1.69
+export const ROCK_NAME = ['淺層岩', '中層岩', '深層岩'];
 export const ORE_VALUE = { normal: 1, deep: 3 };
 
 export const MOVE_SPEED = 3; // tiles / s

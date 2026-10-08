@@ -1,51 +1,49 @@
-// The one hand-made map: 24 × 36, entrance at the top, three depth zones split by
-// bedrock shelves. Bedrock is surveyed (visible from the start) so the gaps can be
-// planned around; everything else is found by digging.
+// The one hand-made map: 24 × 36, entrance at the top, three depth zones. Every tile
+// is rock (no bedrock, no open caves); all rock in a zone has that zone's hardness.
 //
-//   #  bedrock (cannot be dug)        .  rock, zone hardness with small seeded variation
-//   s / h / d  soft / hard / dense    o  ore (value 1)      O  deep ore (value 3)
-//   _  natural cave (empty, unseen)   E  entrance (empty, seen)
-//   S  tutorial relic site            R  relic site         C  main core     N  nest
+//   .  rock                 o  ore (value 1)      O  deep ore (value 3)
+//   E  entrance (open)      S  tutorial relic site      R  relic site
+//   C  main core            N  nest
 
-import { DEEP_ROW, MAP_H, MAP_SEED, MAP_W, MID_ROW, ORE_VALUE, ROCK_HP } from './config';
+import { DEEP_ROW, MAP_H, MAP_W, MID_ROW, ORE_VALUE, ROCK_HP } from './config';
 
 export const TEMPLATE = [
-  '##########EEEE##########', // 0
-  '....s.....EEEE....h.....',
-  '..oo..........s.....oo..',
-  '.oooo....h.........ooo..',
-  '..oo..........o..h..o...',
-  '.......h.....ooo........', // 5
-  '...........s..o....h....',
-  '...____............oo...',
-  '...__S_..h.........ooo..',
-  '....___...h.......__o...',
-  '..oo..............__....', // 10
-  '.ooo.......s.....__.....',
-  '##################...###', // shelf: one gap, on the right
-  '...h...........s..._....',
-  '.__....oo.........___...',
-  '_R_....ooo..........__..', // 15
-  '___.....ooo.....s.......',
+  '..........EEEE..........', // 0
+  '..........EEEE..........',
+  '..oo................oo..',
+  '.oooo..............ooo..',
+  '..oo..........o.....o...',
+  '.............ooo........', // 5
+  '..............o.........',
+  '...................oo...',
+  '.....S.............ooo..',
+  '....................o...',
+  '..oo....................', // 10
+  '.ooo....................',
+  '........................',
+  '........................',
+  '.......oo...............',
+  '.R.....ooo..............', // 15
+  '........ooo.............',
   '..........o.............',
-  '....s.....__._......oo..',
-  '.........__N__....ooooo.',
-  '...oo.....___......oo...', // 20
-  '..ooo...............__..',
-  '..oo...s..........__R_..',
-  '...............h..___...',
-  '#...#########d##########', // shelf: gap on the left, dense plug near the centre
-  '....hh......h...........', // 25
-  '..O.......hhh.......O...',
-  '.OO..__.................',
-  '.O..__N_...........__...',
-  '....____....h.....__R...',
-  '.......__...........___.', // 30: the deep nest's cave runs into the core room
-  '........_______.........',
-  '.OO.....___C___.....OO..',
-  '.O......_______......O..',
-  '............h...........',
-  '########################', // 35
+  '....................oo..',
+  '...........N......ooooo.',
+  '...oo..............oo...', // 20
+  '..ooo...................',
+  '..oo................R...',
+  '........................',
+  '........................',
+  '........................', // 25
+  '..O.................O...',
+  '.OO.....................',
+  '.O....N.................',
+  '....................R...',
+  '........................', // 30
+  '........................',
+  '.OO........C........OO..',
+  '.O...................O..',
+  '........................',
+  '........................', // 35
 ];
 
 export const T_EMPTY = 0;
@@ -58,7 +56,7 @@ export const T_NEST = 6;
 
 export interface World {
   kind: number[];
-  hard: number[]; // 0 soft, 1 hard, 2 dense
+  hard: number[]; // zone index: 0 shallow, 1 mid, 2 deep (indexes ROCK_HP)
   hp: number[];
   ore: number[]; // ore value carried by the tile
   seen: number[]; // 1 = explored
@@ -84,15 +82,8 @@ export function rng(seed: number) {
   };
 }
 
-function zoneHardness(zone: number, r: number): number {
-  if (zone === 0) return r < 0.14 ? 1 : 0;
-  if (zone === 1) return r < 0.2 ? 0 : r < 0.27 ? 2 : 1;
-  return r < 0.25 ? 1 : 2;
-}
-
 export function buildWorld(): World {
   if (TEMPLATE.length !== MAP_H || TEMPLATE.some((row) => row.length !== MAP_W)) throw new Error('map template size');
-  const rand = rng(MAP_SEED);
   const n = MAP_W * MAP_H;
   const w: World = {
     kind: new Array(n).fill(T_ROCK),
@@ -111,53 +102,35 @@ export function buildWorld(): World {
     for (let x = 0; x < MAP_W; x++) {
       const i = idx(x, y);
       const c = TEMPLATE[y][x];
-      const zone = zoneOf(y);
-      const hard = zoneHardness(zone, rand());
-      w.hard[i] = hard;
+      w.hard[i] = zoneOf(y);
       switch (c) {
-        case '#': w.kind[i] = T_BEDROCK; break;
-        case '_': w.kind[i] = T_EMPTY; break;
         case 'E':
           w.kind[i] = T_EMPTY;
           w.seen[i] = 1;
           if (!entranceSet && y === 1) { w.entrance = { x: x + 1, y }; entranceSet = true; }
           break;
-        case 's': w.hard[i] = 0; break;
-        case 'h': w.hard[i] = 1; break;
-        case 'd': w.hard[i] = 2; break;
         case 'o': w.kind[i] = T_ORE; w.ore[i] = ORE_VALUE.normal; break;
         case 'O': w.kind[i] = T_ORE; w.ore[i] = ORE_VALUE.deep; break;
         case 'S': w.kind[i] = T_RELIC; w.sites.push({ x, y, tutorial: true }); break;
         case 'R': w.kind[i] = T_RELIC; w.sites.push({ x, y, tutorial: false }); break;
         case 'C': w.kind[i] = T_CORE; w.core = { x, y }; break;
         case 'N': w.kind[i] = T_NEST; w.nests.push({ x, y, zone: [] }); break;
-        default: break; // '.' keeps the zone hardness
+        default: break; // '.' plain rock
       }
       w.hp[i] = w.kind[i] === T_ROCK || w.kind[i] === T_ORE ? ROCK_HP[w.hard[i]] : 0;
     }
   }
-  // A nest's range is the natural cave it sits in.
-  for (const nest of w.nests) nest.zone = caveAround(w, nest.x, nest.y, 14);
+  // A nest's range (shown by the echo lens): tiles within two steps of it.
+  for (const nest of w.nests) nest.zone = nestRange(nest.x, nest.y);
   return w;
 }
 
-function caveAround(w: World, x: number, y: number, limit: number): number[] {
+function nestRange(x: number, y: number): number[] {
   const out: number[] = [];
-  const seen = new Set<number>();
-  const queue: number[] = [];
-  for (const [dx, dy] of DIRS) {
-    const nx = x + dx, ny = y + dy;
-    if (inBounds(nx, ny) && w.kind[idx(nx, ny)] === T_EMPTY) { queue.push(idx(nx, ny)); seen.add(idx(nx, ny)); }
-  }
-  while (queue.length && out.length < limit) {
-    const i = queue.shift()!;
-    out.push(i);
-    const cx = i % MAP_W, cy = Math.floor(i / MAP_W);
-    for (const [dx, dy] of DIRS) {
-      const nx = cx + dx, ny = cy + dy;
-      if (!inBounds(nx, ny)) continue;
-      const j = idx(nx, ny);
-      if (!seen.has(j) && w.kind[j] === T_EMPTY) { seen.add(j); queue.push(j); }
+  for (let dy = -2; dy <= 2; dy++) {
+    for (let dx = -2; dx <= 2; dx++) {
+      const d = Math.abs(dx) + Math.abs(dy);
+      if (d > 0 && d <= 2 && inBounds(x + dx, y + dy)) out.push(idx(x + dx, y + dy));
     }
   }
   return out;
