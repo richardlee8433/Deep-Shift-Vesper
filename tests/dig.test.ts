@@ -7,7 +7,7 @@ import {
 } from '../src/dig/map';
 import {
   activateSite, build, demolish, droneTile, equipRelic, markDirty, monsterField, press, release, routeFrom, steer, step,
-  tileX, tileY, unequipRelic, usePulse,
+  tileX, tileY, turretCoverage, unequipRelic, usePulse,
 } from '../src/dig/sim';
 import { maxBaseHp, newGame, parseSave, threatOf, type GameState } from '../src/dig/state';
 import { Game } from '../src/dig/game';
@@ -98,31 +98,58 @@ test('walls cost monsters time; they smash a wall when it is the only way', () =
   assert.ok(wallHp < BUILD.wall.hp || rockNear, 'it attacks the wall or burrows around it');
 });
 
-test('building rules: cost, range, open floor only; demolish refunds half', () => {
+test('building rules: walls and traps on the floor, turrets in the rock wall; demolish refunds half', () => {
   const s = newGame(1);
   s.ore = 20;
   assert.equal(build(s, idx(SPAWN.x, SPAWN.y), 'wall').ok, false, 'not under the miner');
-  assert.equal(build(s, idx(SPAWN.x, SPAWN.y + 5), 'wall').ok, false, 'not on rock');
-  assert.ok(build(s, idx(12, 3), 'turret').ok);
-  assert.equal(s.world.kind[idx(12, 3)], T_TURRET);
+  assert.equal(build(s, idx(SPAWN.x, SPAWN.y + 5), 'wall').ok, false, 'walls not on rock');
+  assert.equal(build(s, idx(12, 3), 'turret').ok, false, 'turrets not on the open floor');
+  assert.equal(build(s, idx(5, 5), 'turret').ok, false, 'turrets must touch a tunnel');
+  assert.ok(build(s, idx(10, 3), 'turret').ok, 'turret set into the chamber wall');
+  assert.equal(s.world.kind[idx(10, 3)], T_TURRET);
   assert.equal(s.ore, 5);
-  assert.equal(build(s, idx(11, 3), 'turret').ok, false, 'cannot afford');
+  assert.equal(build(s, idx(10, 2), 'turret').ok, false, 'cannot afford');
   assert.ok(build(s, idx(11, 0), 'wall').ok);
-  assert.ok(demolish(s, idx(12, 3)).ok);
-  assert.equal(s.world.kind[idx(12, 3)], T_EMPTY);
+  assert.ok(demolish(s, idx(10, 3)).ok);
+  assert.equal(s.world.kind[idx(10, 3)], T_ROCK, 'a wall turret leaves rock behind');
   assert.equal(s.ore, 2 + Math.floor(BUILD.turret.cost / 2));
 });
 
-test('turrets shoot monsters in range', () => {
+test('turrets shoot monsters they can see', () => {
   const s = newGame(1);
   quiet(s);
   s.ore = 50;
-  assert.ok(build(s, idx(17, 2), 'turret').ok);
+  s.drone.x = 17.5; s.drone.y = 2.5;
+  step(s, STEP); // look around
+  assert.ok(build(s, idx(19, 2), 'turret').ok);
   s.drone.dead = 1e9;
   s.enemies.push({ id: 1, kind: 'crawler', x: 18.5, y: 0.5, hp: 12, maxHp: 12, stun: 0, kb: null, hit: 0, chew: 0 });
   run(s, 3);
   assert.equal(s.enemies.length, 0);
   assert.equal(s.stats.kills, 1);
+});
+
+test('a wall turret covers the corridor without blocking it', () => {
+  const s = newGame(1);
+  quiet(s);
+  s.ore = 50;
+  const corridor: [number, number][] = [];
+  for (let x = 19; x <= 27; x++) corridor.push([x, 2]);
+  carve(s, corridor);
+  const routeBefore = routeFrom(s, idx(27, 2)).join();
+  s.drone.x = 20.5; s.drone.y = 2.5;
+  markDirty(s);
+  step(s, STEP); // look around
+  assert.ok(build(s, idx(22, 1), 'turret').ok, 'set into the corridor ceiling');
+  assert.equal(routeFrom(s, idx(27, 2)).join(), routeBefore, 'monsters still walk the same corridor');
+  const cover = turretCoverage(s, idx(22, 1));
+  assert.ok(cover.includes(idx(25, 2)) && cover.includes(idx(19, 2)), 'sees along the corridor both ways');
+  assert.ok(!cover.includes(idx(22, 4)), 'not through rock');
+  s.drone.dead = 1e9;
+  s.enemies.push({ id: 1, kind: 'crawler', x: 25.5, y: 2.5, hp: 12, maxHp: 12, stun: 0, kb: null, hit: 0, chew: 0 });
+  s.enemies[0].stun = 99; // hold still
+  run(s, 2.5);
+  assert.equal(s.enemies.length, 0, 'shot from the wall');
 });
 
 test('waves arrive on the timer, scale with threat and come out of the rifts', () => {

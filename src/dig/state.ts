@@ -90,7 +90,7 @@ export interface GameState {
   maxDepth: number;
   wave: Wave;
   upgrades: Record<UpgradeId, number>;
-  towers: Record<number, { cd: number; angle: number }>;
+  towers: Record<number, { cd: number; angle: number; onRock?: boolean }>; // onRock: built into a rock wall
   relics: { found: RelicId[]; equipped: RelicId[] };
   cap: { count: number; cd: number };
   repCd: number;

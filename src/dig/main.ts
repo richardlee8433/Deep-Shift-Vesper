@@ -7,8 +7,9 @@ import { clearFx, draw, layout, newView, onSignal, screenToTile } from './render
 import * as sim from './sim';
 import {
   activateSite, build, buildError, buyUpgrade, demolish, equipRelic, frontTile, nearBase, press, release, repairBase,
-  retarget, setSink, steer, toggleRecall, unequipRelic, usePulse,
+  retarget, setSink, steer, toggleRecall, turretCoverage, unequipRelic, usePulse,
 } from './sim';
+import { T_TURRET } from './map';
 import { clearSave, newGame, readSave, writeSave } from './state';
 import {
   basePanelHtml, closeModal, escapeModal, initModal, introHtml, modalOpen, openModal, pauseHtml, relicPanelHtml, resetHud,
@@ -368,9 +369,15 @@ function frame(now: number): void {
   snapCamera = false;
   if (pointer.inside || pointer.down) hover = screenToTile(view, s, pointer.x, pointer.y);
   const ghostTile = selected ? (pointer.inside && hover >= 0 ? hover : frontTile(s)) : -1;
+  const ghostOk = selected && ghostTile >= 0 ? !buildError(s, ghostTile, selected) : false;
+  // Show what a turret can hit: the one being placed, or an existing one under the pointer.
+  let coverage: number[] | null = null;
+  if (selected === 'turret' && ghostOk) coverage = turretCoverage(s, ghostTile);
+  else if (!selected && hover >= 0 && pointer.inside && s.world.kind[hover] === T_TURRET) coverage = turretCoverage(s, hover);
   draw(ctx, s, view, {
     hover: game.paused ? -1 : hover,
-    ghost: selected && ghostTile >= 0 ? { tile: ghostTile, kind: selected, ok: !buildError(s, ghostTile, selected) } : null,
+    coverage: game.paused ? null : coverage,
+    ghost: selected && ghostTile >= 0 ? { tile: ghostTile, kind: selected, ok: ghostOk } : null,
     dt: game.paused ? 0 : dt,
     time: now / 1000,
     dpr,

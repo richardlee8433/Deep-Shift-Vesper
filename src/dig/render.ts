@@ -245,6 +245,7 @@ function updateFx(dt: number): void {
 
 export interface DrawOpts {
   hover: number;
+  coverage: number[] | null; // open tiles a turret (placed or planned) can hit
   ghost: { tile: number; kind: BuildKind; ok: boolean } | null;
   dt: number;
   time: number;
@@ -300,6 +301,23 @@ export function draw(main: CanvasRenderingContext2D, s: GameState, v: View, o: D
         b.fillStyle = 'rgba(0,0,0,0.2)';
         b.fillRect(px, py + 3, TP, 2);
       }
+    }
+  }
+
+  // Turret coverage preview: the tunnel tiles it can shoot.
+  if (o.coverage) {
+    const pulse = 0.26 + 0.08 * Math.sin(t * 5);
+    for (const c of o.coverage) {
+      const px = tileX(c) * TP - cx, py = tileY(c) * TP - cy;
+      b.fillStyle = `rgba(255,200,100,${pulse.toFixed(2)})`;
+      b.fillRect(px, py, TP, TP);
+      b.fillStyle = 'rgba(255,220,140,0.8)';
+      b.fillRect(px + 7, py + 7, 2, 2);
+      b.fillStyle = 'rgba(255,200,100,0.45)';
+      b.fillRect(px, py, TP, 1);
+      b.fillRect(px, py + TP - 1, TP, 1);
+      b.fillRect(px, py, 1, TP);
+      b.fillRect(px + TP - 1, py, 1, TP);
     }
   }
 

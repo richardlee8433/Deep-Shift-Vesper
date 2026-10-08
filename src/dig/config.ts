@@ -38,8 +38,8 @@ export const BASE = { hp: 300, fallLoss: 0.3, fallRestore: 0.5, menuRange: 4 };
 export type BuildKind = 'wall' | 'turret' | 'trap';
 export const BUILD_KINDS: BuildKind[] = ['wall', 'turret', 'trap'];
 export const BUILD: Record<BuildKind, { name: string; cost: number; hp: number; text: string }> = {
-  wall: { name: '岩牆', cost: 3, hp: 60, text: '堵住通道。怪物會改道，沒有別的路才會啃牆。' },
-  turret: { name: '砲塔', cost: 15, hp: 80, text: '自動射擊 4.5 格內最近的怪物。' },
+  wall: { name: '岩牆', cost: 3, hp: 60, text: '堵住通道，逼怪物改道；沒有別的路才會啃牆。' },
+  turret: { name: '砲塔', cost: 15, hp: 80, text: '嵌進通道旁的岩壁，不擋路；自動射擊 4.5 格內看得到的怪物。' },
   trap: { name: '尖刺陷阱', cost: 8, hp: 0, text: '鋪在通道上，持續傷害經過的怪物。' },
 };
 export const BUILD_RANGE = 6;

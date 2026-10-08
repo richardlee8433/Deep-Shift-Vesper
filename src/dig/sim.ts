@@ -396,11 +396,17 @@ export function buildError(s: GameState, tile: number, kind: BuildKind): string 
   const w = s.world;
   if (tile < 0) return '這裡不能蓋';
   if (!w.seen[tile]) return '未探索區域';
-  if (w.kind[tile] !== T_EMPTY) return kind === 'trap' ? '陷阱只能鋪在已挖通的通道上' : '只能蓋在已挖通的通道上';
+  const k = w.kind[tile];
+  if (kind === 'turret') {
+    // Turrets are set into the tunnel wall: a rock tile touching an open tunnel. They never block the way.
+    if (!isRock(k)) return isWalkable(k) ? '砲塔要嵌進通道旁的岩壁（選緊鄰通道的岩格）' : '這裡不能蓋';
+    if (!neighbors(tile).some((n) => isWalkable(w.kind[n]) && w.seen[n])) return '砲塔要緊鄰已挖通的通道';
+  } else if (k !== T_EMPTY) return kind === 'trap' ? '陷阱只能鋪在已挖通的通道上' : '岩牆只能蓋在已挖通的通道上';
   const d = s.drone;
   if (Math.hypot(tileX(tile) + 0.5 - d.x, tileY(tile) + 0.5 - d.y) > BUILD_RANGE) return `太遠了（${BUILD_RANGE} 格內）`;
   if (s.ore < BUILD[kind].cost) return `礦石不足（需要 ${BUILD[kind].cost}）`;
   if (kind === 'trap') return w.trap[tile] ? '這裡已有陷阱' : null;
+  if (kind === 'turret') return null;
   if (tile === droneTile(s)) return '不能蓋在探機腳下';
   if (s.enemies.some((e) => tileOf(e.x, e.y) === tile)) return '有怪物擋住';
   return null;
@@ -412,17 +418,55 @@ export function build(s: GameState, tile: number, kind: BuildKind): CommandResul
   const w = s.world;
   s.ore -= BUILD[kind].cost;
   if (kind === 'trap') w.trap[tile] = 1;
-  else {
-    w.kind[tile] = kind === 'wall' ? T_WALL : T_TURRET;
-    w.hp[tile] = BUILD[kind].hp;
+  else if (kind === 'turret') {
+    // Any ore in the rock comes out while the turret is set in.
+    s.ore += w.ore[tile];
+    w.ore[tile] = 0;
+    w.kind[tile] = T_TURRET;
+    w.hp[tile] = BUILD.turret.hp;
+    s.towers[tile] = { cd: 0, angle: Math.PI / 2, onRock: true };
+    markDirty(s);
+  } else {
+    w.kind[tile] = T_WALL;
+    w.hp[tile] = BUILD.wall.hp;
     w.trap[tile] = 0;
-    if (kind === 'turret') s.towers[tile] = { cd: 0, angle: Math.PI / 2 };
     markDirty(s);
     if (s.drone.path.includes(tile)) s.drone.path = [];
   }
   s.stats.built += 1;
   sink({ t: 'built', tile, kind });
   return { ok: true };
+}
+
+/** Where a turret looks out from: the middle of each face that opens onto a tunnel. */
+export function turretOrigins(s: GameState, t: number): [number, number][] {
+  const out: [number, number][] = [];
+  for (const [dx, dy] of DIRS) {
+    const x = tileX(t) + dx, y = tileY(t) + dy;
+    if (inBounds(x, y) && isWalkable(s.world.kind[idx(x, y)])) out.push([tileX(t) + 0.5 + dx * 0.55, tileY(t) + 0.5 + dy * 0.55]);
+  }
+  return out;
+}
+
+/** Can a turret on tile t hit the point (x, y)? Range is from the turret's face, with a clear line. */
+export function turretSees(s: GameState, t: number, x: number, y: number, origins = turretOrigins(s, t)): boolean {
+  return origins.some(([ox, oy]) => Math.hypot(x - ox, y - oy) <= TOWER.range && lineOfSight(s, ox, oy, x, y));
+}
+
+/** Open tiles a turret on tile t (built or planned) could shoot at. */
+export function turretCoverage(s: GameState, t: number): number[] {
+  const origins = turretOrigins(s, t);
+  if (!origins.length) return [];
+  const r = Math.ceil(TOWER.range) + 1;
+  const out: number[] = [];
+  for (let y = tileY(t) - r; y <= tileY(t) + r; y++) {
+    for (let x = tileX(t) - r; x <= tileX(t) + r; x++) {
+      if (!inBounds(x, y)) continue;
+      const i = idx(x, y);
+      if (isWalkable(s.world.kind[i]) && s.world.seen[i] && turretSees(s, t, x + 0.5, y + 0.5, origins)) out.push(i);
+    }
+  }
+  return out;
 }
 
 export function demolish(s: GameState, tile: number): CommandResult {
@@ -436,8 +480,9 @@ export function demolish(s: GameState, tile: number): CommandResult {
   let refund = 0;
   if (isStructure(k)) {
     refund = Math.floor(BUILD[k === T_WALL ? 'wall' : 'turret'].cost * DEMOLISH_REFUND);
-    w.kind[tile] = T_EMPTY;
-    w.hp[tile] = 0;
+    const intoRock = k === T_TURRET && s.towers[tile]?.onRock;
+    w.kind[tile] = intoRock ? T_ROCK : T_EMPTY; // a wall turret leaves solid rock behind
+    w.hp[tile] = intoRock ? ROCK_HP[w.hard[tile]] : 0;
     delete s.towers[tile];
     markDirty(s);
   } else if (w.trap[tile]) {
@@ -629,21 +674,20 @@ function knock(s: GameState, e: Enemy, push: number, stun: number): void {
   e.stun = Math.max(e.stun, stun);
 }
 
-function lineOfSight(s: GameState, x1: number, y1: number, x2: number, y2: number, from = -1): boolean {
+function lineOfSight(s: GameState, x1: number, y1: number, x2: number, y2: number): boolean {
   const steps = Math.ceil(Math.hypot(x2 - x1, y2 - y1) * 4);
   for (let k = 1; k < steps; k++) {
-    const t = tileOf(x1 + ((x2 - x1) * k) / steps, y1 + ((y2 - y1) * k) / steps);
-    if (t !== from && !isWalkable(s.world.kind[t])) return false;
+    if (!isWalkable(s.world.kind[tileOf(x1 + ((x2 - x1) * k) / steps, y1 + ((y2 - y1) * k) / steps)])) return false;
   }
   return true;
 }
 
-function nearestEnemy(s: GameState, x: number, y: number, range: number, from = -1): Enemy | null {
+function nearestEnemy(s: GameState, x: number, y: number, range: number): Enemy | null {
   let best: Enemy | null = null;
   let bd = Infinity;
   for (const e of s.enemies) {
     const dd = Math.hypot(e.x - x, e.y - y);
-    if (dd <= range && dd < bd && lineOfSight(s, x, y, e.x, e.y, from)) { best = e; bd = dd; }
+    if (dd <= range && dd < bd && lineOfSight(s, x, y, e.x, e.y)) { best = e; bd = dd; }
   }
   return best;
 }
@@ -940,7 +984,13 @@ export function step(s: GameState, dt: number): void {
     const tw = s.towers[t];
     tw.cd = Math.max(0, tw.cd - dt);
     const x = tileX(t) + 0.5, y = tileY(t) + 0.5;
-    const target = nearestEnemy(s, x, y, TOWER.range, t);
+    const origins = turretOrigins(s, t);
+    let target: Enemy | null = null;
+    let td = Infinity;
+    for (const e of s.enemies) {
+      const dd = Math.hypot(e.x - x, e.y - y);
+      if (dd < td && turretSees(s, t, e.x, e.y, origins)) { target = e; td = dd; }
+    }
     if (!target) continue;
     tw.angle = Math.atan2(target.y - y, target.x - x);
     if (tw.cd > 0) continue;

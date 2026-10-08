@@ -117,7 +117,7 @@ export function tileInfo(s: GameState, tile: number): string | null {
   }
   if (k === T_WALL || k === T_TURRET) {
     const b = k === T_WALL ? BUILD.wall : BUILD.turret;
-    return `<b>${b.name}</b><span>耐久 ${Math.ceil(w.hp[tile])} / ${b.hp}</span><span>${b.text}</span><span>右鍵／X 拆除（退回一半）</span>`;
+    return `<b>${b.name}</b><span>耐久 ${Math.ceil(w.hp[tile])} / ${b.hp}</span><span>${b.text}</span>${k === T_TURRET ? '<span class="good">亮起的格子是它的射擊範圍</span>' : ''}<span>右鍵／X 拆除（退回一半）</span>`;
   }
   if (k === T_RELIC) {
     const site = s.sites.find((p) => p.x === tileX(tile) && p.y === tileY(tile));
@@ -188,7 +188,8 @@ export const HELP = `
   <table class="help">
     <tr><th><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></th><td>朝該方向挖掘，挖通就走過去；按住一路往前挖（方向鍵也可以）</td></tr>
     <tr><th>滑鼠</th><td>點通道移動；按住岩格挖掘、拖到下一格接著挖；停留看資訊</td></tr>
-    <tr><th><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd></th><td>選擇建造：岩牆／砲塔／尖刺陷阱。點通道放置（可拖曳連續放），或按 <kbd>E</kbd> 放在面前那格。<kbd>Q</kbd> 取消</td></tr>
+    <tr><th><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd></th><td>選擇建造，點一下放置（岩牆、陷阱可拖曳連續放），或按 <kbd>E</kbd> 放在面前那格。<kbd>Q</kbd> 取消<br>
+      岩牆、陷阱蓋在<b>通道</b>上；砲塔嵌進<b>通道旁的岩壁</b>，不擋路，放置時會亮出它打得到的格子</td></tr>
     <tr><th>右鍵 / <kbd>X</kbd></th><td>拆除建築（滑鼠指的那格，或面前那格），退回一半礦石</td></tr>
     <tr><th><kbd>B</kbd></th><td>在基地附近開基地面板：升級、修復核心、更換遺物</td></tr>
     <tr><th><kbd>Space</kbd></th><td>脈衝：擊退附近怪物，冷卻 12 秒</td></tr>
@@ -198,7 +199,7 @@ export const HELP = `
   <ul class="rules">
     <li>怪物每隔一段時間從地圖最底下的<b>地心裂縫</b>湧出，一路往上攻擊<b>基地核心</b>。</li>
     <li>牠們會優先走<b>你挖好的通道</b>；沒有通道就慢慢啃穿岩石。挖得越深越廣，資源越多，也替牠們開了越多條路。</li>
-    <li>用<b>岩牆</b>堵路逼牠們繞道或啃牆，在窄道放<b>砲塔</b>和<b>陷阱</b>。</li>
+    <li>像塔防一樣佈置<b>殺戮走廊</b>：挖一條讓牠們走的長通道，兩側岩壁嵌<b>砲塔</b>、路上鋪<b>陷阱</b>，再用<b>岩牆</b>封掉其他捷徑。</li>
     <li><b>地心騷動</b>越高每波越大：啟動遠古裝置、礦脈連鎖、以及你挖到的最深處都會提高它。</li>
     <li>核心被打爆不會結束遊戲：怪物退去、損失 30% 礦石、核心修回一半。探機損毀會在 5 秒後於基地重建。</li>
   </ul>`;

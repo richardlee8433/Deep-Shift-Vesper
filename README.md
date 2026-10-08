@@ -25,7 +25,9 @@ All numbers are starting values in `src/dig/config.ts`; nothing is balanced yet.
   else in three zones (each 30% harder than the one above), seeded ore veins, six relic sites, three
   rifts in the bottom row. Saved under `deep-shift-vesper/dig-v2`.
 - **Controls:** `WASD` / arrows dig and walk; mouse click to move, hold rock to dig; `1` `2` `3` pick
-  wall / turret / spike trap and click (or drag) or press `E` to place; right-click / `X` demolishes for
+  wall / turret / spike trap and click (or drag) or press `E` to place. Walls and traps go on tunnel
+  floor; turrets are set into the rock wall beside a tunnel (they never block it) and preview the
+  tiles they can hit; right-click / `X` demolishes for
   half the cost back; `B` opens the base panel near the core (upgrades, repair, relic loadout);
   `Space` knock-back pulse; `R` recall to base; `Esc` pause.
 - **Monsters** walk a cost field toward the base core: open tunnels are cheap, rock is slow to chew,
