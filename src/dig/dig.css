@@ -113,7 +113,28 @@ kbd {
 @keyframes blink { 50% { border-color: transparent; } }
 .threat { font-size: 13px; color: var(--dim); }
 .threat b { color: var(--threat); font-size: 16px; }
-.depth { font-size: 12px; }
+.noise {
+  position: relative;
+  overflow: hidden;
+  font-size: 13px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--dim);
+  isolation: isolate;
+}
+.noise::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--fill, 0%);
+  background: rgba(197, 140, 240, 0.22);
+  z-index: -1;
+  transition: width 0.15s;
+}
+.noise.alert { color: #ffc2cb; border-color: rgba(255, 127, 147, 0.6); }
+.noise.alert::before { background: rgba(255, 127, 147, 0.3); }
 #scene { image-rendering: pixelated; }
 
 .builds { display: flex; gap: 6px; }
@@ -425,7 +446,7 @@ summary { cursor: pointer; color: var(--dim); }
 .log th { color: var(--dim); }
 
 @media (max-width: 760px) {
-  .bld span, .depth { display: none; }
+  .bld span { display: none; }
   .bar.wide { width: 120px; }
 }
 

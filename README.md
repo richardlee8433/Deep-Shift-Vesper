@@ -22,8 +22,8 @@ npm run build     # typecheck + build; also writes dist/vesper-dig.html and dist
 All numbers are starting values in `src/dig/config.ts`; nothing is balanced yet.
 
 - **One persistent world** (30 × 48, `src/dig/map.ts`): base chamber at the top, solid rock everywhere
-  else in three zones (each 30% harder than the one above), seeded ore veins, six relic sites, three
-  rifts in the bottom row. Saved under `deep-shift-vesper/dig-v2`.
+  else in three zones (each 30% harder than the one above), ore scattered in many 1–3 tile pockets plus
+  a few big veins, six relic sites, three rifts in the bottom row. Saved under `deep-shift-vesper/dig-v2`.
 - **Controls:** `WASD` / arrows dig and walk; mouse click to move, hold rock to dig; `1` `2` `3` pick
   wall / turret / spike trap and click (or drag) or press `E` to place. Walls and traps go on tunnel
   floor; turrets are set into the rock wall beside a tunnel (they never block it) and preview the
@@ -33,9 +33,11 @@ All numbers are starting values in `src/dig/config.ts`; nothing is balanced yet.
 - **Monsters** walk a cost field toward the base core: open tunnels are cheap, rock is slow to chew,
   walls and turrets cost more (`PATH_COST`). Every tile you dig is a cheaper road for them. Blocked,
   they chew rock or smash structures; near the miner they turn to fight.
-- **Waves** start after 3 minutes and come every 2 minutes, with a 6 s quake warning that shows their
-  routes. Size grows with the wave number and with 地心騷動 (threat): relic activations, detonator chains
-  and the deepest row you have reached.
+- **Waves** start after 3 minutes and come every 3 minutes, with a 6 s quake warning that shows their
+  routes. Size grows with the wave number and with 地心騷動 (threat): relic activations and detonator chains.
+- **Noise raids:** each zone has a noise meter; every tile the player breaks there adds 1. A full meter
+  (shallow 40 / mid 35 / deep 30) sets off a raid of 3 / 5 / 7 monsters from the rifts and resets. Raids
+  cannot be avoided, only timed — build first, then dig the meter full (`NOISE` in config).
 - **Losing is a setback, not an end:** if the core falls, monsters clear, 30% of ore is lost and the core
   is restored to half. A destroyed miner is rebuilt at the base after 5 s.
 - **Relics** (six, one per site) go into a collection; up to three equipped, swapped at the base.

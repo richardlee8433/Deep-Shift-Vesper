@@ -1,13 +1,13 @@
 // DOM side: status strip, build bar, relic slots, toasts, tooltip and modal panels.
 
 import {
-  BUILD, BUILD_KINDS, type BuildKind, DIG_DPS, ENEMY, PULSE, RECALL_TIME, ROCK_HP, ROCK_NAME, THREAT, UPGRADE_IDS, UPGRADES, WAVE,
+  BUILD, BUILD_KINDS, type BuildKind, DIG_DPS, ENEMY, NOISE, NOISE_WARN, PULSE, RECALL_TIME, ROCK_HP, ROCK_NAME, THREAT, UPGRADE_IDS, UPGRADES, WAVE,
   armoredEvery, waveSize,
 } from './config';
 import { isWalkable, T_BASE, T_ORE, T_RELIC, T_RIFT, T_ROCK, T_TURRET, T_WALL, zoneOf, ZONE_NAME } from './map';
 import { RELIC_IDS, RELICS, type RelicId } from './relics';
 import { canDig, distMap, nearBase, repairCost, standTile, tileX, tileY } from './sim';
-import { depthThreat, drillMult, type GameState, maxBaseHp, maxShield, threatOf } from './state';
+import { drillMult, type GameState, maxBaseHp, maxShield, threatOf } from './state';
 
 const $ = (id: string) => document.getElementById(id)!;
 
@@ -41,7 +41,11 @@ export function updateHud(s: GameState, sel: BuildKind | null): void {
     waveEl.textContent = `第 ${w.n} 波・剩 ${left} 隻`;
   } else waveEl.textContent = `第 ${w.n + 1} 波 ${fmtTime(w.timer)}`;
   waveEl.classList.toggle('alert', w.active || w.timer <= WAVE.warn);
-  $('depth').textContent = `${ZONE_NAME[zoneOf(Math.floor(d.y))]}・${Math.floor(d.y)}`;
+  const zone = zoneOf(Math.floor(d.y));
+  const noise = $('noise');
+  noise.textContent = `${ZONE_NAME[zone]}噪音 ${s.noise[zone]}/${NOISE[zone].limit}`;
+  noise.classList.toggle('alert', s.noise[zone] >= NOISE[zone].limit - NOISE_WARN);
+  (noise as HTMLElement).style.setProperty('--fill', `${(s.noise[zone] / NOISE[zone].limit) * 100}%`);
 
   const key = s.relics.equipped.join(',');
   if (key !== slotKey) {
@@ -197,10 +201,12 @@ export const HELP = `
     <tr><th><kbd>Esc</kbd></th><td>暫停、說明與設定</td></tr>
   </table>
   <ul class="rules">
-    <li>怪物每隔一段時間從地圖最底下的<b>地心裂縫</b>湧出，一路往上攻擊<b>基地核心</b>。</li>
+    <li>怪物每 3 分鐘一波，從地圖最底下的<b>地心裂縫</b>湧出，一路往上攻擊<b>基地核心</b>。</li>
+    <li><b>噪音</b>：每一層都有噪音條，你在那層每挖一格就 +1，滿了立刻引來一次突襲（淺層 40 格／中層 35／深層 30，越深越多隻）。躲不掉，但可以先蓋好防線再挖滿。</li>
     <li>牠們會優先走<b>你挖好的通道</b>；沒有通道就慢慢啃穿岩石。挖得越深越廣，資源越多，也替牠們開了越多條路。</li>
     <li>像塔防一樣佈置<b>殺戮走廊</b>：挖一條讓牠們走的長通道，兩側岩壁嵌<b>砲塔</b>、路上鋪<b>陷阱</b>，再用<b>岩牆</b>封掉其他捷徑。</li>
-    <li><b>地心騷動</b>越高每波越大：啟動遠古裝置、礦脈連鎖、以及你挖到的最深處都會提高它。</li>
+    <li><b>地心騷動</b>越高，波次和突襲越大：啟動遠古裝置、礦脈連鎖會提高它。</li>
+    <li>礦石零散分布在小礦點裡，只有少數大礦脈；回聲透鏡能看到 7 格內的礦。</li>
     <li>核心被打爆不會結束遊戲：怪物退去、損失 30% 礦石、核心修回一半。探機損毀會在 5 秒後於基地重建。</li>
   </ul>`;
 
@@ -258,8 +264,9 @@ export function basePanelHtml(s: GameState): string {
     <section><h2>遺物 <small>點一下裝上／卸下，最多 3 件</small></h2><div class="picks">${relics}</div></section>
     <section class="intel">
       <h2>情報</h2>
-      <p>地心騷動 <b>${t}</b>（遺跡 ${s.threat.relic}・連鎖 ${s.threat.chain}・深度 ${depthThreat(s)}）・下一波約 <b>${next}</b> 隻${ae ? `，每 ${ae} 隻一隻${ENEMY.armored.name}` : ''}</p>
-      <p class="dim">擊殺 ${s.stats.kills}・挖掘 ${s.stats.tilesDug} 格・建造 ${s.stats.built}・最佳擊退第 ${s.stats.bestWave} 波・核心失守 ${s.stats.coreFalls} 次・探機損毀 ${s.stats.deaths} 次</p>
+      <p>地心騷動 <b>${t}</b>（遺跡 ${s.threat.relic}・連鎖 ${s.threat.chain}）・下一波約 <b>${next}</b> 隻${ae ? `，每 ${ae} 隻一隻${ENEMY.armored.name}` : ''}</p>
+      <p>噪音：${NOISE.map((n, z) => `${ZONE_NAME[z]} ${s.noise[z]}/${n.limit}（滿了來 ${Math.round(n.size * (1 + t / 100))} 隻）`).join('・')}</p>
+      <p class="dim">擊殺 ${s.stats.kills}・挖掘 ${s.stats.tilesDug} 格・建造 ${s.stats.built}・最佳擊退第 ${s.stats.bestWave} 波・突襲 ${s.stats.raids} 次・核心失守 ${s.stats.coreFalls} 次・探機損毀 ${s.stats.deaths} 次</p>
     </section>
     <div class="panel-btns"><button type="button" class="primary" data-act="close" data-focus>回到礦坑</button></div>`;
 }

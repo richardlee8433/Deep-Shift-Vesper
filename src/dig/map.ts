@@ -62,7 +62,11 @@ export function rng(seed: number) {
   };
 }
 
-const VEINS = [10, 9, 8]; // per zone
+// Ore per zone: many small pockets (1–3 tiles) spread apart so finding ore means digging
+// more tunnels, plus a few big veins worth a trip (and worth a detonator chain).
+const POCKETS = [26, 20, 13];
+const VEINS = [1, 2, 2];
+const POCKET_GAP = 2; // no other ore within this many tiles (Chebyshev) of a new pocket
 
 export function buildWorld(): World {
   const rand = rng(MAP_SEED);
@@ -83,22 +87,38 @@ export function buildWorld(): World {
     SITES.some((s) => Math.abs(s.x - x) + Math.abs(s.y - y) <= 1) ||
     RIFTS.some((r) => Math.abs(r.x - x) + Math.abs(r.y - y) <= 1);
 
-  // Ore veins: short random walks inside each zone.
   const zoneRows = [[0, MID_ROW - 1], [MID_ROW, DEEP_ROW - 1], [DEEP_ROW, MAP_H - 2]];
+  const lay = (zone: number, sx: number, sy: number, size: number) => {
+    let x = sx, y = sy;
+    for (let k = 0; k < size; k++) {
+      if (inBounds(x, y) && zoneOf(y) === zone && !reserved(x, y)) {
+        w.kind[idx(x, y)] = T_ORE;
+        w.ore[idx(x, y)] = ORE_VALUE[zone];
+      }
+      const [dx, dy] = DIRS[Math.floor(rand() * 4)];
+      x = Math.max(0, Math.min(MAP_W - 1, x + dx));
+      y = Math.max(zoneRows[zone][0], Math.min(zoneRows[zone][1], y + dy));
+    }
+  };
+  const lonely = (x: number, y: number) => {
+    for (let dy = -POCKET_GAP; dy <= POCKET_GAP; dy++) {
+      for (let dx = -POCKET_GAP; dx <= POCKET_GAP; dx++) {
+        if (inBounds(x + dx, y + dy) && w.kind[idx(x + dx, y + dy)] === T_ORE) return false;
+      }
+    }
+    return true;
+  };
+  const spot = (zone: number) => [1 + Math.floor(rand() * (MAP_W - 2)), zoneRows[zone][0] + Math.floor(rand() * (zoneRows[zone][1] - zoneRows[zone][0] + 1))];
   for (let zone = 0; zone < 3; zone++) {
     for (let v = 0; v < VEINS[zone]; v++) {
-      let x = 1 + Math.floor(rand() * (MAP_W - 2));
-      let y = zoneRows[zone][0] + Math.floor(rand() * (zoneRows[zone][1] - zoneRows[zone][0] + 1));
-      const size = 4 + Math.floor(rand() * 6);
-      for (let k = 0; k < size; k++) {
-        if (inBounds(x, y) && zoneOf(y) === zone && !reserved(x, y)) {
-          w.kind[idx(x, y)] = T_ORE;
-          w.ore[idx(x, y)] = ORE_VALUE[zone];
-        }
-        const [dx, dy] = DIRS[Math.floor(rand() * 4)];
-        x = Math.max(0, Math.min(MAP_W - 1, x + dx));
-        y = Math.max(zoneRows[zone][0], Math.min(zoneRows[zone][1], y + dy));
-      }
+      const [x, y] = spot(zone);
+      lay(zone, x, y, 12 + Math.floor(rand() * 4));
+    }
+    for (let p = 0, tries = 0; p < POCKETS[zone] && tries < 500; tries++) {
+      const [x, y] = spot(zone);
+      if (reserved(x, y) || !lonely(x, y)) continue;
+      lay(zone, x, y, 1 + Math.floor(rand() * 4));
+      p++;
     }
   }
 

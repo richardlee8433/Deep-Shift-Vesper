@@ -1,7 +1,7 @@
 // One persistent game: the world map, the miner, the base, monsters, waves and
 // everything bought or found. Saved as a single entry.
 
-import { BASE, MAP_H, MAP_W, START_ORE, SHIELD_BASE, THREAT, type EnemyKind, type UpgradeId, UPGRADES, VISION, WAVE } from './config';
+import { BASE, MAP_W, START_ORE, SHIELD_BASE, type EnemyKind, type UpgradeId, UPGRADES, VISION, WAVE } from './config';
 import { buildWorld, RIFTS, rng, SITES, SPAWN, type World } from './map';
 import { RELIC_IDS, type RelicId } from './relics';
 
@@ -62,6 +62,13 @@ export interface Wave {
   armoredEvery: number;
 }
 
+export interface Raid {
+  toSpawn: number;
+  spawned: number;
+  spawnT: number;
+  armoredEvery: number;
+}
+
 export interface Stats {
   kills: number;
   tilesDug: number;
@@ -70,6 +77,7 @@ export interface Stats {
   coreFalls: number;
   deaths: number;
   bestWave: number; // highest wave fully repelled
+  raids: number;
 }
 
 export interface GameState {
@@ -88,6 +96,8 @@ export interface GameState {
   ore: number;
   threat: { relic: number; chain: number };
   maxDepth: number;
+  noise: number[]; // per zone: tiles broken since the last raid from that zone
+  raid: Raid;
   wave: Wave;
   upgrades: Record<UpgradeId, number>;
   towers: Record<number, { cd: number; angle: number; onRock?: boolean }>; // onRock: built into a rock wall
@@ -131,6 +141,8 @@ export function newGame(seed = (Math.random() * 2 ** 31) | 0): GameState {
     ore: START_ORE,
     threat: { relic: 0, chain: 0 },
     maxDepth: SPAWN.y,
+    noise: [0, 0, 0],
+    raid: { toSpawn: 0, spawned: 0, spawnT: 0, armoredEvery: 0 },
     wave: { n: 0, timer: WAVE.first, announced: false, toSpawn: 0, spawned: 0, spawnT: 0, active: false, hpMult: 1, armoredEvery: 0 },
     upgrades: { drill: 0, shield: 0, base: 0, tower: 0 },
     towers: {},
@@ -140,7 +152,7 @@ export function newGame(seed = (Math.random() * 2 ** 31) | 0): GameState {
     bio: 0,
     firstUse: [],
     prompt: null,
-    stats: { kills: 0, tilesDug: 0, oreMined: 0, built: 0, coreFalls: 0, deaths: 0, bestWave: 0 },
+    stats: { kills: 0, tilesDug: 0, oreMined: 0, built: 0, coreFalls: 0, deaths: 0, bestWave: 0, raids: 0 },
     settings: { sound: true, numbers: true },
     seenHelp: false,
   };
@@ -157,9 +169,8 @@ export const drillMult = (s: GameState) => 1 + UPGRADES.drill.step * s.upgrades.
 export const maxShield = (s: GameState) => SHIELD_BASE + UPGRADES.shield.step * s.upgrades.shield;
 export const maxBaseHp = (s: GameState) => BASE.hp + UPGRADES.base.step * s.upgrades.base;
 export const towerMult = (s: GameState) => 1 + UPGRADES.tower.step * s.upgrades.tower;
-export const depthThreat = (s: GameState) => Math.round((s.maxDepth / (MAP_H - 1)) * THREAT.depth);
-/** 地心騷動, 0–100: relics, chains and depth reached. Bigger waves. */
-export const threatOf = (s: GameState) => Math.min(100, s.threat.relic + s.threat.chain + depthThreat(s));
+/** 地心騷動, 0–100: relics and chains. Bigger waves and raids. */
+export const threatOf = (s: GameState) => Math.min(100, s.threat.relic + s.threat.chain);
 
 /** Deterministic random number (state kept in the save). */
 export function nextRand(s: GameState): number {
@@ -189,6 +200,8 @@ export function parseSave(raw: unknown): GameState | null {
   s.stats = { ...fresh.stats, ...s.stats };
   s.upgrades = { ...fresh.upgrades, ...s.upgrades };
   s.towers ??= {};
+  s.noise ??= [0, 0, 0];
+  s.raid ??= { ...fresh.raid };
   s.world.trap ??= new Array(s.world.kind.length).fill(0);
   return s;
 }

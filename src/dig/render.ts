@@ -368,11 +368,11 @@ export function draw(main: CanvasRenderingContext2D, s: GameState, v: View, o: D
   if (d.dig >= 0) outline(d.dig, '#ffe08a', true);
 
   // Monster routes: always with the echo lens, and during the quake warning.
-  if (has(s, 'lens') || s.wave.announced || fx.quake > 0) {
+  if (has(s, 'lens') || s.wave.announced || s.raid.toSpawn > 0 || fx.quake > 0) {
     const blink = Math.sin(t * 10) > -0.3;
     if (blink) {
       for (const r of RIFTS) {
-        if (!w.seen[idx(r.x, r.y)] && !w.scan[idx(r.x, r.y)] && !s.wave.announced) continue;
+        if (!w.seen[idx(r.x, r.y)] && !w.scan[idx(r.x, r.y)] && !s.wave.announced && s.raid.toSpawn === 0) continue;
         const route = routeFrom(s, idx(r.x, r.y));
         for (let k = 1; k < route.length; k++) {
           if (k % 2) continue;

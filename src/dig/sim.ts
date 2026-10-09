@@ -6,7 +6,7 @@
 // for them, which is the core trade-off.
 
 import {
-  AGGRO, armoredEvery, BASE, BIO, BUILD, type BuildKind, CAPACITOR, CHAIN, CONTACT, DEMOLISH_REFUND, DIG_DPS, ENEMY,
+  AGGRO, armoredEvery, BASE, BIO, NOISE, NOISE_WARN, RAID_WARN, BUILD, type BuildKind, CAPACITOR, CHAIN, CONTACT, DEMOLISH_REFUND, DIG_DPS, ENEMY,
   type EnemyKind, GUN, LENS_RANGE, MAP_H, MAP_W, MAX_ENEMIES, MOVE_SPEED, PATH_COST, PULSE, RECALL_TIME, REPULSOR,
   RESPAWN_TIME, ROCK_HP, THREAT, TOWER, TRAP_DPS, UPGRADES, type UpgradeId, VISION, WAVE, waveBonus, waveSize, BUILD_RANGE,
 } from './config';
@@ -24,6 +24,7 @@ export type GameEvent =
   | { type: 'relicActivated'; relic: RelicId; site: number }
   | { type: 'enemyKilled'; kind: EnemyKind; x: number; y: number }
   | { type: 'waveCleared'; n: number }
+  | { type: 'raid'; zone: number; size: number }
   | { type: 'coreFell' };
 
 /** Presentation signals for the renderer, audio and HUD. */
@@ -635,9 +636,31 @@ export function destroyTile(s: GameState, tile: number, source: Source, dir: num
     s.ore += ore;
     s.stats.oreMined += ore;
     s.stats.tilesDug += 1;
+    addNoise(s, hard);
   }
   sink({ t: 'break', tile, source, ore });
   emit(s, { type: 'tileDestroyed', tile, source, ore, wasOre: k === T_ORE, hard, dir });
+}
+
+const ZONE_LABEL = ['淺層', '中層', '深層'];
+
+/** One more broken tile in a zone; a full meter sets off a raid from the rifts. */
+function addNoise(s: GameState, zone: number): void {
+  const n = NOISE[zone];
+  s.noise[zone] += 1;
+  if (s.noise[zone] === n.limit - NOISE_WARN) {
+    sink({ t: 'toast', text: `${ZONE_LABEL[zone]}噪音快滿了：再挖 ${NOISE_WARN} 格會引來突襲`, tone: 'warn' });
+  }
+  if (s.noise[zone] < n.limit) return;
+  s.noise[zone] = 0;
+  const size = Math.round(n.size * (1 + threatOf(s) / 100));
+  s.raid.toSpawn += size;
+  s.raid.spawnT = Math.max(s.raid.spawnT, RAID_WARN);
+  s.raid.armoredEvery = n.armoredEvery;
+  s.stats.raids += 1;
+  sink({ t: 'quake' });
+  sink({ t: 'toast', text: `${ZONE_LABEL[zone]}噪音滿了：${size} 隻怪物 ${RAID_WARN} 秒後從地心湧出`, tone: 'threat' });
+  emit(s, { type: 'raid', zone, size });
 }
 
 function damageEnemy(s: GameState, e: Enemy, dmg: number): void {
@@ -741,6 +764,7 @@ function coreFall(s: GameState): void {
   s.base.hp = Math.round(maxBaseHp(s) * BASE.fallRestore);
   s.wave.toSpawn = 0;
   s.wave.active = false;
+  s.raid.toSpawn = 0;
   s.wave.timer = Math.max(s.wave.timer, WAVE.interval);
   s.wave.announced = false;
   s.stats.coreFalls += 1;
@@ -890,6 +914,20 @@ export function step(s: GameState, dt: number): void {
       spawn(s, r.x, r.y, armored ? 'armored' : 'crawler', wv.hpMult);
       wv.spawned += 1;
       wv.toSpawn -= 1;
+    }
+  }
+
+  // Raids set off by noise.
+  const rd = s.raid;
+  if (rd.toSpawn > 0) {
+    rd.spawnT -= dt;
+    if (rd.spawnT <= 0 && s.enemies.length < MAX_ENEMIES) {
+      rd.spawnT = WAVE.gap;
+      const r = s.rifts[rd.spawned % s.rifts.length];
+      const armored = rd.armoredEvery > 0 && (rd.spawned + 1) % rd.armoredEvery === 0;
+      spawn(s, r.x, r.y, armored ? 'armored' : 'crawler', wv.hpMult);
+      rd.spawned += 1;
+      rd.toSpawn -= 1;
     }
   }
 
@@ -1045,7 +1083,7 @@ export function step(s: GameState, dt: number): void {
   }
 
   if (s.base.hp <= 0) coreFall(s);
-  if (wv.active && wv.toSpawn === 0 && s.enemies.length === 0) {
+  if (wv.active && wv.toSpawn === 0 && rd.toSpawn === 0 && s.enemies.length === 0) {
     wv.active = false;
     const bonus = waveBonus(wv.n);
     s.ore += bonus;

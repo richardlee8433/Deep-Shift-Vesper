@@ -1,12 +1,12 @@
 // Headless checks for the base-defence simulation. Run with `npm test`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BUILD, MAP_H, MAP_W, ROCK_HP, STEP, WAVE, waveSize } from '../src/dig/config';
+import { BUILD, MAP_H, MAP_W, NOISE, RAID_WARN, ROCK_HP, STEP, WAVE, waveSize } from '../src/dig/config';
 import {
   BASE_POS, buildWorld, idx, isWalkable, RIFTS, SITES, SPAWN, T_EMPTY, T_ORE, T_RELIC, T_RIFT, T_ROCK, T_TURRET, T_WALL, zoneOf,
 } from '../src/dig/map';
 import {
-  activateSite, build, demolish, droneTile, equipRelic, markDirty, monsterField, press, release, routeFrom, steer, step,
+  activateSite, build, demolish, destroyTile, droneTile, equipRelic, markDirty, monsterField, press, release, routeFrom, steer, step,
   tileX, tileY, turretCoverage, unequipRelic, usePulse,
 } from '../src/dig/sim';
 import { maxBaseHp, newGame, parseSave, threatOf, type GameState } from '../src/dig/state';
@@ -161,6 +161,62 @@ test('waves arrive on the timer, scale with threat and come out of the rifts', (
   assert.equal(s.enemies.length, waveSize(1, threatOf(s)));
   for (const e of s.enemies) assert.ok(RIFTS.some((r) => Math.hypot(r.x + 0.5 - e.x, r.y + 0.5 - e.y) < 1.5));
   assert.ok(waveSize(5, 60) > waveSize(5, 0));
+});
+
+test('ore is scattered: many small pockets, a few big veins', () => {
+  const w = buildWorld();
+  const seen = new Set<number>();
+  const sizes: number[] = [];
+  w.ore.forEach((v, i) => {
+    if (!v || seen.has(i)) return;
+    let n = 0;
+    const q = [i];
+    seen.add(i);
+    while (q.length) {
+      const c = q.pop()!;
+      n++;
+      for (const j of [c - 1, c + 1, c - MAP_W, c + MAP_W]) {
+        if (j < 0 || j >= w.ore.length || !w.ore[j] || seen.has(j)) continue;
+        if (Math.abs(j - c) === 1 && Math.floor(j / MAP_W) !== Math.floor(c / MAP_W)) continue;
+        seen.add(j);
+        q.push(j);
+      }
+    }
+    sizes.push(n);
+  });
+  const total = w.ore.reduce((a, b) => a + b, 0);
+  assert.ok(total >= 300, `about 1.5x the old 215 ore (${total})`);
+  assert.ok(sizes.length >= 50, `many pockets (${sizes.length})`);
+  assert.ok(sizes.filter((n) => n <= 3).length / sizes.length > 0.7, 'mostly 1–3 tiles');
+  assert.ok(sizes.filter((n) => n >= 6).length >= 3, 'a few big veins remain');
+});
+
+test('noise: a full meter in a zone sets off a raid from the rifts', () => {
+  const s = newGame(1);
+  quiet(s);
+  s.drone.dead = 1e9;
+  const limit = NOISE[1].limit;
+  // Break mid-zone rock (by the player) until one short of the limit.
+  const row = 20;
+  for (let x = 0; x < limit - 1; x++) destroyTile(s, idx(x % MAP_W, row + Math.floor(x / MAP_W)), 'drill', -1);
+  assert.equal(s.noise[1], limit - 1);
+  assert.equal(s.raid.toSpawn, 0);
+  destroyTile(s, idx(5, row + 3), 'drill', -1);
+  assert.equal(s.noise[1], 0, 'meter resets');
+  assert.equal(s.raid.toSpawn, NOISE[1].size);
+  run(s, RAID_WARN + WAVE.gap * (NOISE[1].size + 1));
+  assert.equal(s.enemies.length, NOISE[1].size);
+  for (const e of s.enemies) assert.ok(e.y > MAP_H - 5, 'came up from the rifts at the bottom');
+  // Monsters chewing rock make no noise.
+  destroyTile(s, idx(5, row + 5), 'monster', -1);
+  assert.equal(s.noise[1], 0);
+  assert.equal(s.stats.raids, 1);
+});
+
+test('threat comes from relics and chains only, not depth', () => {
+  const s = newGame(1);
+  s.maxDepth = MAP_H - 1;
+  assert.equal(threatOf(s), 0);
 });
 
 test('core falls: monsters cleared, 30% ore lost, core back at half', () => {
