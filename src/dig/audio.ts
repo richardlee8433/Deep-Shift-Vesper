@@ -71,7 +71,6 @@ export function play(sig: Signal): void {
       break;
     }
     case 'break':
-      if (sig.source === 'monster') break;
       hiss(0.16, 0.5, sig.source === 'chain' ? 2200 : 500);
       if (sig.ore) tone(sig.ore > 1 ? 1200 : 880, 0.12, 'triangle', 0.18, sig.ore > 1 ? 1800 : 1320);
       break;

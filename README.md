@@ -23,20 +23,21 @@ All numbers are starting values in `src/dig/config.ts`; nothing is balanced yet.
 
 - **One persistent world** (30 × 48, `src/dig/map.ts`): base chamber at the top, solid rock everywhere
   else in three zones (each 30% harder than the one above), ore scattered in many 1–3 tile pockets plus
-  a few big veins, six relic sites, three rifts in the bottom row. Saved under `deep-shift-vesper/dig-v2`.
+  a few big veins, six relic sites, three lava rifts in the bottom row (scenery). Saved under `deep-shift-vesper/dig-v2`.
 - **Controls:** `WASD` / arrows dig and walk; mouse click to move, hold rock to dig; `1` `2` `3` pick
   wall / turret / spike trap and click (or drag) or press `E` to place. Walls and traps go on tunnel
   floor; turrets are set into the rock wall beside a tunnel (they never block it) and preview the
   tiles they can hit; right-click / `X` demolishes for
   half the cost back; `B` opens the base panel near the core (upgrades, repair, relic loadout);
   `Space` knock-back pulse; `R` recall to base; `Esc` pause.
-- **Monsters** walk a cost field toward the base core: open tunnels are cheap, rock is slow to chew,
-  walls and turrets cost more (`PATH_COST`). Every tile you dig is a cheaper road for them. Blocked,
-  they chew rock or smash structures; near the miner they turn to fight.
-- **Waves** start after 3 minutes and come every 3 minutes, with a 6 s quake warning that shows their
-  routes. Size grows with the wave number and with 地心騷動 (threat): relic activations and detonator chains.
+- **Monsters** break out of the rock at the deepest end of your tunnels (the deepest open tile linked
+  to the base, at least `EMERGE_MIN_STEPS` away; walls don't count as a seal) and walk the tunnels to
+  the core. They never dig through rock; walls and turrets in the way get smashed. The breakout tile
+  flashes during warnings and shows on the minimap; near the miner they turn to fight.
+- **Waves** start after 3 minutes and come every 3 minutes, with a 6 s quake warning that marks the
+  breakout point and their route. Size grows with the wave number and with 地心騷動 (threat): relic activations and detonator chains.
 - **Noise raids:** each zone has a noise meter; every tile the player breaks there adds 1. A full meter
-  (shallow 40 / mid 35 / deep 30) sets off a raid of 3 / 5 / 7 monsters from the rifts and resets. Raids
+  (shallow 40 / mid 35 / deep 30) sets off a raid of 3 / 5 / 7 monsters at the tunnel end (5 s warning) and resets. Raids
   cannot be avoided, only timed — build first, then dig the meter full (`NOISE` in config).
 - **Losing is a setback, not an end:** if the core falls, monsters clear, 30% of ore is lost and the core
   is restored to half. A destroyed miner is rebuilt at the base after 5 s.

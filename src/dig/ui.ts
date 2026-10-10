@@ -6,7 +6,7 @@ import {
 } from './config';
 import { isWalkable, T_BASE, T_ORE, T_RELIC, T_RIFT, T_ROCK, T_TURRET, T_WALL, zoneOf, ZONE_NAME } from './map';
 import { RELIC_IDS, RELICS, type RelicId } from './relics';
-import { canDig, distMap, nearBase, repairCost, standTile, tileX, tileY } from './sim';
+import { canDig, distMap, emergePoint, nearBase, repairCost, standTile, tileX, tileY } from './sim';
 import { drillMult, type GameState, maxBaseHp, maxShield, threatOf } from './state';
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -109,9 +109,10 @@ export function tileInfo(s: GameState, tile: number): string | null {
   }
   const reach = (ok: boolean) => (ok ? '' : '<span class="bad">不可達：需要相鄰通道</span>');
   if (isWalkable(k)) {
-    const rift = k === T_RIFT ? '<span class="bad">地心裂縫：怪物從這裡湧出</span>' : '';
+    const rift = k === T_RIFT ? '<span>地心裂縫：地底最深處的熔岩裂口</span>' : '';
+    const em = emergePoint(s) === tile ? '<span class="bad">怪物會從這裡破岩而出（目前最深的通道末端）</span>' : '';
     const trap = w.trap[tile] ? '<span>尖刺陷阱（右鍵／X 拆除）</span>' : '';
-    return `<b>${k === T_RIFT ? '地心裂縫' : '通道'}</b>${rift}${trap}${distMap(s)[tile] >= 0 ? '' : '<span class="bad">不可達</span>'}`;
+    return `<b>${k === T_RIFT ? '地心裂縫' : '通道'}</b>${rift}${em}${trap}${distMap(s)[tile] >= 0 ? '' : '<span class="bad">不可達</span>'}`;
   }
   if (k === T_ROCK || k === T_ORE) {
     const h = w.hard[tile];
@@ -201,9 +202,9 @@ export const HELP = `
     <tr><th><kbd>Esc</kbd></th><td>暫停、說明與設定</td></tr>
   </table>
   <ul class="rules">
-    <li>怪物每 3 分鐘一波，從地圖最底下的<b>地心裂縫</b>湧出，一路往上攻擊<b>基地核心</b>。</li>
-    <li><b>噪音</b>：每一層都有噪音條，你在那層每挖一格就 +1，滿了立刻引來一次突襲（淺層 40 格／中層 35／深層 30，越深越多隻）。躲不掉，但可以先蓋好防線再挖滿。</li>
-    <li>牠們會優先走<b>你挖好的通道</b>；沒有通道就慢慢啃穿岩石。挖得越深越廣，資源越多，也替牠們開了越多條路。</li>
+    <li>怪物每 3 分鐘一波，從<b>你挖得最深的通道末端</b>破岩而出（小地圖上的紅點），沿著通道攻擊<b>基地核心</b>。預警時那一格會閃紅框：通常就是你正在挖的地方，記得先退開或先蓋好防守。</li>
+    <li><b>噪音</b>：每一層都有噪音條，你在那層每挖一格就 +1，滿了立刻從通道最深處引來一次突襲（淺層 40 格／中層 35／深層 30，越深越多隻）。躲不掉，但可以先蓋好防線再挖滿。</li>
+    <li>牠們<b>只走你挖開的通道</b>，不會鑽岩石；擋路的岩牆和砲塔會被打破。挖得越深，牠們出現的地方就越深；用岩牆封住通道也不會改變出現的位置。</li>
     <li>像塔防一樣佈置<b>殺戮走廊</b>：挖一條讓牠們走的長通道，兩側岩壁嵌<b>砲塔</b>、路上鋪<b>陷阱</b>，再用<b>岩牆</b>封掉其他捷徑。</li>
     <li><b>地心騷動</b>越高，波次和突襲越大：啟動遠古裝置、礦脈連鎖會提高它。</li>
     <li>礦石零散分布在小礦點裡，只有少數大礦脈；回聲透鏡能看到 7 格內的礦。</li>

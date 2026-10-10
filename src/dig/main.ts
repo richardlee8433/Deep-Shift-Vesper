@@ -136,7 +136,7 @@ function showIntro(): void {
     S().seenHelp = true;
     game.resume('intro');
     save();
-    toast('先往下挖、收集礦石。第一波會在 3 分鐘後從地心湧出。', 'info');
+    toast('先往下挖、收集礦石。第一波 3 分鐘後會從你挖得最深的地方破岩而出。', 'info');
   }, null, 'wide');
 }
 

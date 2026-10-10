@@ -6,7 +6,7 @@
 // for them, which is the core trade-off.
 
 import {
-  AGGRO, armoredEvery, BASE, BIO, NOISE, NOISE_WARN, RAID_WARN, BUILD, type BuildKind, CAPACITOR, CHAIN, CONTACT, DEMOLISH_REFUND, DIG_DPS, ENEMY,
+  AGGRO, armoredEvery, BASE, BIO, EMERGE_MIN_STEPS, EMERGE_STUN, NOISE, NOISE_WARN, RAID_WARN, BUILD, type BuildKind, CAPACITOR, CHAIN, CONTACT, DEMOLISH_REFUND, DIG_DPS, ENEMY,
   type EnemyKind, GUN, LENS_RANGE, MAP_H, MAP_W, MAX_ENEMIES, MOVE_SPEED, PATH_COST, PULSE, RECALL_TIME, REPULSOR,
   RESPAWN_TIME, ROCK_HP, THREAT, TOWER, TRAP_DPS, UPGRADES, type UpgradeId, VISION, WAVE, waveBonus, waveSize, BUILD_RANGE,
 } from './config';
@@ -17,7 +17,7 @@ import {
 import { RELICS, type RelicId } from './relics';
 import { drillMult, type Enemy, type GameState, maxBaseHp, maxShield, threatOf, towerMult } from './state';
 
-export type Source = 'drill' | 'resonance' | 'chain' | 'monster';
+export type Source = 'drill' | 'resonance' | 'chain';
 
 export type GameEvent =
   | { type: 'tileDestroyed'; tile: number; source: Source; ore: number; wasOre: boolean; hard: number; dir: number }
@@ -66,6 +66,8 @@ interface Cache {
   pVer: number;
   field: Float64Array; // monster cost-to-base
   fVer: number;
+  emerge: number; // breakout tile
+  eVer: number;
 }
 const caches = new WeakMap<GameState, Cache>();
 
@@ -73,7 +75,7 @@ function cacheOf(s: GameState): Cache {
   let c = caches.get(s);
   if (!c) {
     const n = MAP_W * MAP_H;
-    c = { ver: 1, pd: new Int32Array(n), pFrom: -1, pVer: 0, field: new Float64Array(n), fVer: 0 };
+    c = { ver: 1, pd: new Int32Array(n), pFrom: -1, pVer: 0, field: new Float64Array(n), fVer: 0, emerge: -1, eVer: 0 };
     caches.set(s, c);
   }
   return c;
@@ -128,7 +130,6 @@ export function tileCost(s: GameState, t: number): number {
   const w = s.world;
   const k = w.kind[t];
   if (k === T_EMPTY || k === T_RIFT) return PATH_COST.open;
-  if (k === T_ROCK || k === T_ORE) return PATH_COST.open + ROCK_HP[w.hard[t]] * PATH_COST.rockPerHp;
   if (k === T_WALL) return PATH_COST.open + BUILD.wall.hp * PATH_COST.structPerHp;
   if (k === T_TURRET) return PATH_COST.open + BUILD.turret.hp * PATH_COST.structPerHp;
   if (k === T_BASE) return 0;
@@ -197,13 +198,13 @@ export function monsterField(s: GameState): Float64Array {
   return f;
 }
 
-/** The tile a monster on tile t heads for next (may be solid: then it chews it). */
+/** The tile a monster on tile t heads for next (a wall or turret there gets smashed), or -1. */
 export function nextStep(s: GameState, t: number): number {
   const f = monsterField(s);
   let best = -1, bc = Infinity;
   for (const u of neighbors(t)) {
     const c = tileCost(s, u) + f[u];
-    if (c < bc) { bc = c; best = u; }
+    if (c < bc && c < Infinity) { bc = c; best = u; }
   }
   return best;
 }
@@ -220,6 +221,40 @@ export function routeFrom(s: GameState, from: number, limit = 400): number[] {
     cur = n;
   }
   return out;
+}
+
+/**
+ * Where monsters break out: the deepest open tile linked to the base (walls and turrets
+ * do not count as a seal, so walling off a tunnel does not move the breakout point), at
+ * least EMERGE_MIN_STEPS from the base. Ties go to the tile farthest along the tunnels.
+ */
+export function emergePoint(s: GameState): number {
+  const c = cacheOf(s);
+  if (c.eVer === c.ver) return c.emerge;
+  const { kind } = s.world;
+  const steps = new Int32Array(MAP_W * MAP_H).fill(-1);
+  const queue: number[] = [];
+  for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) {
+    const t = idx(BASE_POS.x + dx, BASE_POS.y + dy);
+    steps[t] = 0;
+    queue.push(t);
+  }
+  let best = -1, far = -1;
+  for (let q = 0; q < queue.length; q++) {
+    const u = queue[q];
+    for (const t of neighbors(u)) {
+      if (steps[t] >= 0 || !(isWalkable(kind[t]) || isStructure(kind[t]))) continue;
+      steps[t] = steps[u] + 1;
+      queue.push(t);
+      if (!isWalkable(kind[t])) continue;
+      if (far < 0 || steps[t] > steps[far]) far = t;
+      if (steps[t] < EMERGE_MIN_STEPS) continue;
+      if (best < 0 || tileY(t) > tileY(best) || (tileY(t) === tileY(best) && steps[t] > steps[best])) best = t;
+    }
+  }
+  c.emerge = best >= 0 ? best : far;
+  c.eVer = c.ver;
+  return c.emerge;
 }
 
 export const isDiggable = (k: number) => k === T_ROCK || k === T_ORE;
@@ -570,7 +605,6 @@ export function addThreat(s: GameState, amount: number, text: string, key: 'reli
 
 function emit(s: GameState, ev: GameEvent): void {
   if (ev.type === 'tileDestroyed') {
-    if (ev.source === 'monster') return;
     if (has(s, 'capacitor')) s.cap.count = Math.min(CAPACITOR.tiles, s.cap.count + 1);
     if (ev.source === 'drill' && ev.dir >= 0 && has(s, 'resonance')) resonate(s, ev.tile, ev.dir, ev.hard);
     if (ev.wasOre && ev.source !== 'chain' && has(s, 'detonator')) startChain(s, ev.tile);
@@ -626,25 +660,23 @@ export function destroyTile(s: GameState, tile: number, source: Source, dir: num
   const w = s.world;
   const k = w.kind[tile];
   if (!isRock(k)) return;
-  const ore = source === 'monster' ? 0 : w.ore[tile];
+  const ore = w.ore[tile];
   const hard = w.hard[tile];
   w.kind[tile] = T_EMPTY;
   w.hp[tile] = 0;
   w.ore[tile] = 0;
   markDirty(s);
-  if (source !== 'monster') {
-    s.ore += ore;
-    s.stats.oreMined += ore;
-    s.stats.tilesDug += 1;
-    addNoise(s, hard);
-  }
+  s.ore += ore;
+  s.stats.oreMined += ore;
+  s.stats.tilesDug += 1;
+  addNoise(s, hard);
   sink({ t: 'break', tile, source, ore });
   emit(s, { type: 'tileDestroyed', tile, source, ore, wasOre: k === T_ORE, hard, dir });
 }
 
 const ZONE_LABEL = ['淺層', '中層', '深層'];
 
-/** One more broken tile in a zone; a full meter sets off a raid from the rifts. */
+/** One more broken tile in a zone; a full meter sets off a raid at the end of the tunnels. */
 function addNoise(s: GameState, zone: number): void {
   const n = NOISE[zone];
   s.noise[zone] += 1;
@@ -657,9 +689,11 @@ function addNoise(s: GameState, zone: number): void {
   s.raid.toSpawn += size;
   s.raid.spawnT = Math.max(s.raid.spawnT, RAID_WARN);
   s.raid.armoredEvery = n.armoredEvery;
+  s.raid.at = emergePoint(s);
   s.stats.raids += 1;
+  warnIfClose(s, s.raid.at);
   sink({ t: 'quake' });
-  sink({ t: 'toast', text: `${ZONE_LABEL[zone]}噪音滿了：${size} 隻怪物 ${RAID_WARN} 秒後從地心湧出`, tone: 'threat' });
+  sink({ t: 'toast', text: `${ZONE_LABEL[zone]}噪音滿了：${size} 隻怪物 ${RAID_WARN} 秒後從通道最深處破岩而出`, tone: 'threat' });
   emit(s, { type: 'raid', zone, size });
 }
 
@@ -715,9 +749,24 @@ function nearestEnemy(s: GameState, x: number, y: number, range: number): Enemy 
   return best;
 }
 
-function spawn(s: GameState, x: number, y: number, kind: EnemyKind, hpMult: number): void {
+/** Extra warning when the miner is standing at the breakout point. */
+function warnIfClose(s: GameState, at: number): void {
+  const d = s.drone;
+  if (at < 0 || d.dead >= 0) return;
+  if (Math.hypot(tileX(at) + 0.5 - d.x, tileY(at) + 0.5 - d.y) < 3.5) {
+    sink({ t: 'toast', text: '你就站在破岩點旁邊：快退開，或先蓋好防守！', tone: 'warn' });
+  }
+}
+
+/** The stored breakout tile if it is still open floor, otherwise the current one. */
+function breakout(s: GameState, at: number): number {
+  return at >= 0 && isWalkable(s.world.kind[at]) ? at : emergePoint(s);
+}
+
+function spawn(s: GameState, tile: number, kind: EnemyKind, hpMult: number): void {
+  const x = tileX(tile), y = tileY(tile);
   const hp = ENEMY[kind].hp * hpMult;
-  s.enemies.push({ id: s.nextEnemy++, kind, x: x + 0.5, y: y + 0.5, hp, maxHp: hp, stun: 0, kb: null, hit: 0, chew: 0 });
+  s.enemies.push({ id: s.nextEnemy++, kind, x: x + 0.5, y: y + 0.5, hp, maxHp: hp, stun: EMERGE_STUN, kb: null, hit: 0, chew: 0 });
   sink({ t: 'spawn', x: x + 0.5, y: y + 0.5 });
 }
 
@@ -890,8 +939,10 @@ export function step(s: GameState, dt: number): void {
   wv.timer -= dt;
   if (!wv.announced && wv.timer <= WAVE.warn) {
     wv.announced = true;
+    wv.at = emergePoint(s);
     sink({ t: 'quake' });
-    sink({ t: 'toast', text: `地心震動：第 ${wv.n + 1} 波 ${WAVE.warn} 秒後湧出`, tone: 'threat' });
+    sink({ t: 'toast', text: `地心震動：第 ${wv.n + 1} 波 ${WAVE.warn} 秒後從通道最深處破岩而出`, tone: 'threat' });
+    warnIfClose(s, wv.at);
   }
   if (wv.timer <= 0) {
     const threat = threatOf(s);
@@ -903,15 +954,16 @@ export function step(s: GameState, dt: number): void {
     wv.active = true;
     wv.timer = WAVE.interval;
     wv.announced = false;
+    wv.at = breakout(s, wv.at);
     sink({ t: 'wave', n: wv.n });
   }
   if (wv.toSpawn > 0) {
     wv.spawnT -= dt;
     if (wv.spawnT <= 0 && s.enemies.length < MAX_ENEMIES) {
       wv.spawnT = WAVE.gap;
-      const r = s.rifts[wv.spawned % s.rifts.length];
+      wv.at = breakout(s, wv.at);
       const armored = wv.armoredEvery > 0 && (wv.spawned + 1) % wv.armoredEvery === 0;
-      spawn(s, r.x, r.y, armored ? 'armored' : 'crawler', wv.hpMult);
+      spawn(s, wv.at, armored ? 'armored' : 'crawler', wv.hpMult);
       wv.spawned += 1;
       wv.toSpawn -= 1;
     }
@@ -923,9 +975,9 @@ export function step(s: GameState, dt: number): void {
     rd.spawnT -= dt;
     if (rd.spawnT <= 0 && s.enemies.length < MAX_ENEMIES) {
       rd.spawnT = WAVE.gap;
-      const r = s.rifts[rd.spawned % s.rifts.length];
+      rd.at = breakout(s, rd.at);
       const armored = rd.armoredEvery > 0 && (rd.spawned + 1) % rd.armoredEvery === 0;
-      spawn(s, r.x, r.y, armored ? 'armored' : 'crawler', wv.hpMult);
+      spawn(s, rd.at, armored ? 'armored' : 'crawler', wv.hpMult);
       rd.spawned += 1;
       rd.toSpawn -= 1;
     }
@@ -974,7 +1026,7 @@ export function step(s: GameState, dt: number): void {
       if (isWalkable(nk)) {
         tx = tileX(next) + 0.5; ty = tileY(next) + 0.5;
       } else {
-        // Blocked: settle on the tile centre, then chew or smash what is in the way.
+        // Blocked by a wall, a turret or the core: settle on the tile centre, then smash it.
         const cx = ex + 0.5, cy = ey + 0.5;
         const off = Math.hypot(cx - e.x, cy - e.y);
         if (off > 0.05) {
@@ -987,9 +1039,6 @@ export function step(s: GameState, dt: number): void {
         if (nk === T_BASE) {
           s.base.hp -= def.smash * dt;
           if (Math.random() < dt * 2) sink({ t: 'baseHit' });
-        } else if (isRock(nk)) {
-          w.hp[next] -= def.burrow * dt;
-          if (w.hp[next] <= 1e-9) destroyTile(s, next, 'monster', -1);
         } else if (isStructure(nk)) {
           w.hp[next] -= def.smash * dt;
           if (w.hp[next] <= 0) {

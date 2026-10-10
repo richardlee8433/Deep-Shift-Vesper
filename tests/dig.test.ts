@@ -3,10 +3,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BUILD, MAP_H, MAP_W, NOISE, RAID_WARN, ROCK_HP, STEP, WAVE, waveSize } from '../src/dig/config';
 import {
-  BASE_POS, buildWorld, idx, isWalkable, RIFTS, SITES, SPAWN, T_EMPTY, T_ORE, T_RELIC, T_RIFT, T_ROCK, T_TURRET, T_WALL, zoneOf,
+  BASE_POS, buildWorld, idx, isBaseTile, isWalkable, RIFTS, SITES, SPAWN, T_EMPTY, T_ORE, T_RELIC, T_RIFT, T_ROCK, T_TURRET, T_WALL, zoneOf,
 } from '../src/dig/map';
 import {
-  activateSite, build, demolish, destroyTile, droneTile, equipRelic, markDirty, monsterField, press, release, routeFrom, steer, step,
+  activateSite, build, demolish, destroyTile, droneTile, emergePoint, equipRelic, markDirty, monsterField, press, release, routeFrom, steer, step,
   tileX, tileY, turretCoverage, unequipRelic, usePulse,
 } from '../src/dig/sim';
 import { maxBaseHp, newGame, parseSave, threatOf, type GameState } from '../src/dig/state';
@@ -39,63 +39,77 @@ test('world: solid rock with one hardness per zone, base chamber, sites and rift
   assert.ok(w.ore.filter((v) => v > 0).length > 60, 'plenty of ore');
 });
 
-test('monsters can reach the base from every rift (through rock if they must)', () => {
+/** A shaft straight down from the chamber at column x, to row `bottom`. */
+const shaft = (s: GameState, x: number, bottom: number) => {
+  const t: [number, number][] = [];
+  for (let y = 4; y <= bottom; y++) t.push([x, y]);
+  carve(s, t);
+};
+
+test('monsters break out at the deepest end of the tunnels', () => {
   const s = newGame(1);
-  for (const r of RIFTS) {
-    const route = routeFrom(s, idx(r.x, r.y));
-    const end = route[route.length - 1];
-    assert.ok(tileX(end) >= BASE_POS.x && tileX(end) < BASE_POS.x + 2 && tileY(end) < BASE_POS.y + 2, 'route ends at the base');
-  }
+  shaft(s, 15, 20);
+  assert.equal(emergePoint(s), idx(15, 20));
+  // A side branch that goes deeper takes over.
+  carve(s, [[16, 20], [17, 20], [17, 21], [17, 22], [17, 23]]);
+  assert.equal(emergePoint(s), idx(17, 23));
+  // Walling the tunnel off does not move the breakout point toward the base.
+  s.ore = 50;
+  s.drone.x = 15.5; s.drone.y = 8.5;
+  markDirty(s);
+  step(s, STEP);
+  assert.ok(build(s, idx(15, 10), 'wall').ok);
+  assert.equal(emergePoint(s), idx(17, 23));
 });
 
-test('a dug tunnel becomes the monsters\' road', () => {
+test('with almost no tunnels, monsters still break out away from the core', () => {
   const s = newGame(1);
-  const rift = RIFTS[1];
-  const before = monsterField(s)[idx(rift.x, rift.y)];
-  // A straight shaft from the chamber down to just above the rift.
-  const shaft: [number, number][] = [];
-  for (let y = 4; y < MAP_H - 1; y++) shaft.push([rift.x, y]);
-  carve(s, shaft);
-  const after = monsterField(s)[idx(rift.x, rift.y)];
-  assert.ok(after < before / 3, `cheaper route (${before.toFixed(0)} → ${after.toFixed(0)})`);
-  const route = routeFrom(s, idx(rift.x, rift.y));
-  assert.ok(route.filter((t) => s.world.kind[t] === T_EMPTY).length > 30, 'route follows the shaft');
+  const e = emergePoint(s);
+  assert.ok(e >= 0 && isWalkable(s.world.kind[e]));
+  const d = Math.abs(tileX(e) - (BASE_POS.x + 0.5)) + Math.abs(tileY(e) - (BASE_POS.y + 0.5));
+  assert.ok(d >= 3, 'the far corner of the chamber, not next to the core');
 });
 
-test('monsters chew up to the base, never stand in rock, and damage the core', () => {
+test('monsters never dig: rock is impassable, only tunnels lead to the core', () => {
+  const s = newGame(1);
+  const sealed = idx(5, 30);
+  assert.equal(monsterField(s)[sealed], Infinity, 'no route through solid rock');
+  shaft(s, 15, 30);
+  const route = routeFrom(s, idx(15, 30));
+  assert.ok(route.every((t) => s.world.kind[t] !== T_ROCK && s.world.kind[t] !== T_ORE), 'route stays in the tunnel');
+  assert.ok(isBaseTile(tileX(route[route.length - 1]), tileY(route[route.length - 1])), 'and ends at the core');
+});
+
+test('monsters walk the tunnel to the core and never stand in rock', () => {
   const s = newGame(1);
   quiet(s);
-  s.drone.dead = 1e9; // keep the miner out of it
-  const rift = RIFTS[1];
-  const shaft: [number, number][] = [];
-  for (let y = 4; y < MAP_H - 6; y++) shaft.push([rift.x, y]);
-  carve(s, shaft); // 5 rows of rock left above the rift
-  s.enemies.push({ id: 1, kind: 'crawler', x: rift.x + 0.5, y: rift.y + 0.5, hp: 1e9, maxHp: 1e9, stun: 0, kb: null, hit: 0, chew: 0 });
+  s.drone.dead = 1e9;
+  shaft(s, 15, 30);
+  s.enemies.push({ id: 1, kind: 'crawler', x: 15.5, y: 30.5, hp: 1e9, maxHp: 1e9, stun: 0, kb: null, hit: 0, chew: 0 });
   const hp0 = s.base.hp;
-  for (let t = 0; t < 120 && s.base.hp === hp0; t += STEP) {
+  for (let t = 0; t < 40 && s.base.hp === hp0; t += STEP) {
     step(s, STEP);
     for (const e of s.enemies) assert.ok(isWalkable(s.world.kind[idx(Math.floor(e.x), Math.floor(e.y))]), 'monster on open floor');
   }
   assert.ok(s.base.hp < hp0, 'core took damage');
+  assert.ok(s.time < 25, `arrived fast along the tunnel (${s.time.toFixed(1)} s)`);
 });
 
-test('walls cost monsters time; they smash a wall when it is the only way', () => {
+test('a wall across the only tunnel gets smashed', () => {
   const s = newGame(1);
   quiet(s);
   s.ore = 100;
-  // Corridor right of the chamber; put the miner next to it to build.
   carve(s, [[19, 2], [20, 2], [21, 2], [22, 2]]);
   s.drone.x = 18.5; s.drone.y = 2.5;
   markDirty(s);
   assert.ok(build(s, idx(20, 2), 'wall').ok);
-  assert.equal(s.world.kind[idx(20, 2)], T_WALL);
-  assert.equal(s.ore, 100 - BUILD.wall.cost);
   s.drone.dead = 1e9;
   s.enemies.push({ id: 1, kind: 'armored', x: 22.5, y: 2.5, hp: 1e9, maxHp: 1e9, stun: 0, kb: null, hit: 0, chew: 0 });
-  run(s, 6);
-  const wallHp = s.world.hp[idx(20, 2)];
-  const rockNear = [idx(21, 1), idx(21, 3)].some((t) => s.world.hp[t] < ROCK_HP[0]);
-  assert.ok(wallHp < BUILD.wall.hp || rockNear, 'it attacks the wall or burrows around it');
+  run(s, 3);
+  assert.ok(s.world.hp[idx(20, 2)] < BUILD.wall.hp, 'it attacks the wall');
+  run(s, 10);
+  assert.equal(s.world.kind[idx(20, 2)], T_EMPTY, 'and breaks through');
+  assert.equal(s.world.kind[idx(21, 1)], T_ROCK, 'without digging around it');
 });
 
 test('building rules: walls and traps on the floor, turrets in the rock wall; demolish refunds half', () => {
@@ -152,14 +166,15 @@ test('a wall turret covers the corridor without blocking it', () => {
   assert.equal(s.enemies.length, 0, 'shot from the wall');
 });
 
-test('waves arrive on the timer, scale with threat and come out of the rifts', () => {
+test('waves arrive on the timer, scale with threat and break out at the tunnel end', () => {
   const s = newGame(1);
   s.drone.dead = 1e9;
+  shaft(s, 15, 25);
   run(s, WAVE.first + 0.05);
   assert.equal(s.wave.n, 1);
   run(s, WAVE.gap * (waveSize(1, threatOf(s)) + 1));
   assert.equal(s.enemies.length, waveSize(1, threatOf(s)));
-  for (const e of s.enemies) assert.ok(RIFTS.some((r) => Math.hypot(r.x + 0.5 - e.x, r.y + 0.5 - e.y) < 1.5));
+  for (const e of s.enemies) assert.ok(e.y > 19, `came out near the bottom of the shaft (${e.y.toFixed(1)})`);
   assert.ok(waveSize(5, 60) > waveSize(5, 0));
 });
 
@@ -191,10 +206,11 @@ test('ore is scattered: many small pockets, a few big veins', () => {
   assert.ok(sizes.filter((n) => n >= 6).length >= 3, 'a few big veins remain');
 });
 
-test('noise: a full meter in a zone sets off a raid from the rifts', () => {
+test('noise: a full meter in a zone sets off a raid at the tunnel end', () => {
   const s = newGame(1);
   quiet(s);
   s.drone.dead = 1e9;
+  shaft(s, 15, 12);
   const limit = NOISE[1].limit;
   // Break mid-zone rock (by the player) until one short of the limit.
   const row = 20;
@@ -206,10 +222,7 @@ test('noise: a full meter in a zone sets off a raid from the rifts', () => {
   assert.equal(s.raid.toSpawn, NOISE[1].size);
   run(s, RAID_WARN + WAVE.gap * (NOISE[1].size + 1));
   assert.equal(s.enemies.length, NOISE[1].size);
-  for (const e of s.enemies) assert.ok(e.y > MAP_H - 5, 'came up from the rifts at the bottom');
-  // Monsters chewing rock make no noise.
-  destroyTile(s, idx(5, row + 5), 'monster', -1);
-  assert.equal(s.noise[1], 0);
+  for (const e of s.enemies) assert.ok(isWalkable(s.world.kind[idx(Math.floor(e.x), Math.floor(e.y))]), 'out of a tunnel');
   assert.equal(s.stats.raids, 1);
 });
 

@@ -60,6 +60,7 @@ export interface Wave {
   active: boolean;
   hpMult: number;
   armoredEvery: number;
+  at: number; // breakout tile chosen when the wave was announced, -1 = choose at spawn time
 }
 
 export interface Raid {
@@ -67,6 +68,7 @@ export interface Raid {
   spawned: number;
   spawnT: number;
   armoredEvery: number;
+  at: number; // breakout tile, -1 = choose at spawn time
 }
 
 export interface Stats {
@@ -142,8 +144,8 @@ export function newGame(seed = (Math.random() * 2 ** 31) | 0): GameState {
     threat: { relic: 0, chain: 0 },
     maxDepth: SPAWN.y,
     noise: [0, 0, 0],
-    raid: { toSpawn: 0, spawned: 0, spawnT: 0, armoredEvery: 0 },
-    wave: { n: 0, timer: WAVE.first, announced: false, toSpawn: 0, spawned: 0, spawnT: 0, active: false, hpMult: 1, armoredEvery: 0 },
+    raid: { toSpawn: 0, spawned: 0, spawnT: 0, armoredEvery: 0, at: -1 },
+    wave: { n: 0, timer: WAVE.first, announced: false, toSpawn: 0, spawned: 0, spawnT: 0, active: false, hpMult: 1, armoredEvery: 0, at: -1 },
     upgrades: { drill: 0, shield: 0, base: 0, tower: 0 },
     towers: {},
     relics: { found: [], equipped: [] },
@@ -201,7 +203,8 @@ export function parseSave(raw: unknown): GameState | null {
   s.upgrades = { ...fresh.upgrades, ...s.upgrades };
   s.towers ??= {};
   s.noise ??= [0, 0, 0];
-  s.raid ??= { ...fresh.raid };
+  s.raid = { ...fresh.raid, ...s.raid };
+  s.wave = { ...fresh.wave, ...s.wave };
   s.world.trap ??= new Array(s.world.kind.length).fill(0);
   return s;
 }

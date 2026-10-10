@@ -57,8 +57,10 @@ export const ENEMY: Record<EnemyKind, { name: string; hp: number; speed: number;
 export const CONTACT = 0.8; // tiles; monsters closer than this hurt the miner
 export const AGGRO = 3; // monsters within this many tiles (and a short open path) go for the miner
 export const MAX_ENEMIES = 40;
-/** Path costs for the monsters' route to the base: open tiles are cheap, rock and walls cost by HP. */
-export const PATH_COST = { open: 1, rockPerHp: 6, structPerHp: 0.3 };
+/** Path costs for the monsters' route to the base: open tiles are cheap, walls cost by HP, rock is impassable. */
+export const PATH_COST = { open: 1, structPerHp: 0.3 };
+/** Breakout point: the deepest open tile linked to the base, at least this many steps from it. */
+export const EMERGE_MIN_STEPS = 8;
 
 export const WAVE = { first: 180, interval: 180, warn: 6, gap: 0.7, hpGrowth: 0.1 };
 export function waveSize(n: number, threat: number): number {
@@ -76,7 +78,7 @@ export const waveBonus = (n: number) => 4 + 2 * n;
 export const THREAT = { relic: 15, chain: 2 };
 
 // Noise: every tile the player breaks in a zone fills that zone's meter. When it is full,
-// monsters come up from the rifts in a raid and the meter starts again. Deeper zones fill
+// monsters break out at the end of your tunnels in a raid and the meter starts again. Deeper zones fill
 // faster and send more. The player cannot avoid raids, only choose when to set one off.
 export const NOISE = [
   { limit: 40, size: 3, armoredEvery: 0 },
@@ -84,7 +86,8 @@ export const NOISE = [
   { limit: 30, size: 7, armoredEvery: 3 },
 ];
 export const NOISE_WARN = 5; // tiles left when the meter starts warning
-export const RAID_WARN = 3; // seconds between the raid alarm and the first monster
+export const RAID_WARN = 5; // seconds between the raid alarm and the first monster
+export const EMERGE_STUN = 0.6; // monsters pause this long as they break out of the rock
 
 // Relic numbers.
 export const CHAIN = { max: 6, damage: 4, delay: 0.09 };

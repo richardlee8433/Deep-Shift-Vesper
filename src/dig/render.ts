@@ -6,7 +6,7 @@
 import { BUILD, type BuildKind, MAP_H, MAP_W, RECALL_TIME, ROCK_HP, SIGNAL_RANGE, VISION } from './config';
 import { BASE_POS, CHAMBER, idx, inBounds, isWalkable, RIFTS, rng, T_BASE, T_ORE, T_RELIC, T_RIFT, T_ROCK, T_TURRET, T_WALL, zoneOf } from './map';
 import { GEM, INK, pixelLine, TP, textures, WH, ZONE_PAL } from './pixel';
-import { has, routeFrom, type Signal, tileX, tileY } from './sim';
+import { emergePoint, has, routeFrom, type Signal, tileX, tileY } from './sim';
 import { type GameState, maxBaseHp } from './state';
 
 export const FONT = '"Chakra Petch", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif';
@@ -154,7 +154,9 @@ export function onSignal(sig: Signal, s: GameState | null, numbers: boolean): vo
       fx.shake = Math.max(fx.shake, 0.08);
       break;
     case 'spawn':
-      burst(sig.x, sig.y, '#ff7a3b', 8, 2.5);
+      burst(sig.x, sig.y, '#ff7a3b', 6, 2.5);
+      burst(sig.x, sig.y, '#7a6250', 8, 3.5);
+      fx.shake = Math.max(fx.shake, 0.06);
       break;
     case 'quake':
       fx.quake = 1.6;
@@ -367,19 +369,20 @@ export function draw(main: CanvasRenderingContext2D, s: GameState, v: View, o: D
   if (o.hover >= 0 && !o.ghost) outline(o.hover, 'rgba(255,255,255,0.7)', false);
   if (d.dig >= 0) outline(d.dig, '#ffe08a', true);
 
-  // Monster routes: always with the echo lens, and during the quake warning.
-  if (has(s, 'lens') || s.wave.announced || s.raid.toSpawn > 0 || fx.quake > 0) {
-    const blink = Math.sin(t * 10) > -0.3;
-    if (blink) {
-      for (const r of RIFTS) {
-        if (!w.seen[idx(r.x, r.y)] && !w.scan[idx(r.x, r.y)] && !s.wave.announced && s.raid.toSpawn === 0) continue;
-        const route = routeFrom(s, idx(r.x, r.y));
+  // Breakout point and the monsters' route from it: during a warning, and always with the echo lens.
+  const pending = s.wave.announced ? s.wave.at : s.raid.toSpawn > 0 ? s.raid.at : -1;
+  if (has(s, 'lens') || pending >= 0 || fx.quake > 0) {
+    const from = pending >= 0 ? pending : emergePoint(s);
+    if (from >= 0) {
+      if (Math.sin(t * 10) > -0.3) {
+        const route = routeFrom(s, from);
         for (let k = 1; k < route.length; k++) {
           if (k % 2) continue;
           const [ax, ay] = tc(route[k - 1]), [bx, by] = tc(route[k]);
           pixelLine(b, X(ax), Y(ay), X(bx), Y(by), 'rgba(255,90,110,0.85)');
         }
       }
+      drawBreakout(b, X(tileX(from) + 0.5), Y(tileY(from) + 0.5), t, pending >= 0);
     }
   }
 
@@ -585,6 +588,32 @@ function drawBlock(
     b.fillStyle = INK;
     if (!solidAt(x - 1, y)) b.fillRect(px, py + TP - WH, 1, WH);
     if (!solidAt(x + 1, y)) b.fillRect(px + TP - 1, py + TP - WH, 1, WH);
+  }
+}
+
+/** Glowing cracks in the floor where monsters are about to break out. */
+function drawBreakout(b: CanvasRenderingContext2D, x: number, y: number, t: number, hot: boolean): void {
+  const pulse = 0.5 + 0.5 * Math.sin(t * (hot ? 12 : 4));
+  const r = rng(7);
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * Math.PI * 2 + r() * 0.5;
+    const len = 3 + Math.floor(r() * 4) + (hot ? Math.round(pulse * 2) : 0);
+    pixelLine(b, x, y, Math.round(x + Math.cos(a) * len), Math.round(y + Math.sin(a) * len * 0.7), hot ? (pulse > 0.5 ? '#ffb347' : '#ff5a3b') : 'rgba(255,90,59,0.6)');
+  }
+  b.fillStyle = hot ? '#fff3c4' : '#ff7a3b';
+  b.fillRect(x - 1, y - 1, 2, 2);
+  if (hot) {
+    // A pulsing frame around the tile and a "!" above it, drawn over sprites so it shows
+    // even when the miner is standing right there.
+    const col = `rgba(255,90,110,${0.55 + 0.45 * pulse})`;
+    const o = 8 + Math.round(pulse);
+    b.fillStyle = col;
+    b.fillRect(x - o, y - o, o * 2, 2);
+    b.fillRect(x - o, y + o - 2, o * 2, 2);
+    b.fillRect(x - o, y - o, 2, o * 2);
+    b.fillRect(x + o - 2, y - o, 2, o * 2);
+    b.fillRect(x - 1, y - 24, 3, 7);
+    b.fillRect(x - 1, y - 15, 3, 3);
   }
 }
 
@@ -806,7 +835,8 @@ function drawMinimap(main: CanvasRenderingContext2D, s: GameState, v: View): voi
         m.fillRect(x * k, y * k, k, k);
       }
     }
-    for (const r of RIFTS) { m.fillStyle = '#ff5a3b'; m.fillRect(r.x * k, r.y * k, k, k); }
+    const em = emergePoint(s);
+    if (em >= 0) { m.fillStyle = '#ff5a3b'; m.fillRect(tileX(em) * k - 1, tileY(em) * k - 1, k + 2, k + 2); }
     m.fillStyle = '#9fe0ef';
     m.fillRect(BASE_POS.x * k, BASE_POS.y * k, 2 * k, 2 * k);
     m.fillStyle = '#ff5a6e';
